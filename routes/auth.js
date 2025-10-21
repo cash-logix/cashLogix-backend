@@ -5,6 +5,7 @@ const nodemailer = require('nodemailer');
 const User = require('../models/User');
 const { protect } = require('../middleware/auth');
 const { sendEmailWithFallback } = require('../services/emailService');
+const { sendSimpleEmail } = require('../services/simpleEmailService');
 
 const router = express.Router();
 
@@ -31,7 +32,7 @@ const createTransporter = () => {
   });
 };
 
-// Send verification email with retry logic
+// Send verification email with multiple fallback methods
 const sendVerificationEmail = async (user, token, retryCount = 0) => {
   const maxRetries = 3;
 
@@ -41,26 +42,42 @@ const sendVerificationEmail = async (user, token, retryCount = 0) => {
     const mailOptions = {
       from: process.env.EMAIL_USER,
       to: user.email,
-      subject: 'Cash Logix - Verify Your Email',
+      subject: 'Cash Logix - تأكيد البريد الإلكتروني',
       html: `
-        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-          <h2 style="color: #2563eb;">Welcome to Cash Logix!</h2>
-          <p>Hello ${user.firstName},</p>
-          <p>Thank you for registering with Cash Logix. Please verify your email address by clicking the button below:</p>
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; direction: rtl;">
+          <h2 style="color: #2563eb; text-align: center;">أهلاً وسهلاً بك في Cash Logix!</h2>
+          <p>أهلاً ${user.firstName}،</p>
+          <p>شكراً ليك إنك سجلت معانا في Cash Logix. عشان نكمل التسجيل، لازم نتأكد من البريد الإلكتروني بتاعك.</p>
           <div style="text-align: center; margin: 30px 0;">
-            <a href="${verificationUrl}" style="background-color: #2563eb; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; display: inline-block;">Verify Email</a>
+            <a href="${verificationUrl}" style="background-color: #2563eb; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; display: inline-block;">تأكيد البريد الإلكتروني</a>
           </div>
-          <p>If the button doesn't work, copy and paste this link into your browser:</p>
-          <p style="word-break: break-all; color: #666;">${verificationUrl}</p>
-          <p>This link will expire in 24 hours.</p>
+          <p>لو الزر مش شغال، انسخ الرابط ده وافتحه في المتصفح:</p>
+          <p style="word-break: break-all; color: #666; background: #f5f5f5; padding: 10px; border-radius: 5px;">${verificationUrl}</p>
+          <p>الرابط ده هيبقى صالح لمدة 24 ساعة بس.</p>
           <hr style="margin: 30px 0; border: none; border-top: 1px solid #eee;">
-          <p style="color: #666; font-size: 12px;">If you didn't create an account with Cash Logix, please ignore this email.</p>
+          <p style="color: #666; font-size: 12px; text-align: center;">لو انت مش اللي عمل الحساب ده، متفتحش البريد ده.</p>
         </div>
       `
     };
 
-    await sendEmailWithFallback(mailOptions);
-    console.log(`Verification email sent successfully to ${user.email}`);
+    // Try advanced email service first
+    try {
+      await sendEmailWithFallback(mailOptions);
+      console.log(`Verification email sent successfully to ${user.email}`);
+      return;
+    } catch (advancedError) {
+      console.error('Advanced email service failed, trying simple service:', advancedError.message);
+
+      // Try simple email service as fallback
+      try {
+        await sendSimpleEmail(mailOptions);
+        console.log(`Verification email sent successfully via simple service to ${user.email}`);
+        return;
+      } catch (simpleError) {
+        console.error('Simple email service also failed:', simpleError.message);
+        throw simpleError;
+      }
+    }
 
   } catch (error) {
     console.error(`Email sending failed (attempt ${retryCount + 1}/${maxRetries}):`, error.message);
@@ -76,7 +93,7 @@ const sendVerificationEmail = async (user, token, retryCount = 0) => {
   }
 };
 
-// Send password reset email with retry logic
+// Send password reset email with multiple fallback methods
 const sendPasswordResetEmail = async (user, token, retryCount = 0) => {
   const maxRetries = 3;
 
@@ -86,27 +103,43 @@ const sendPasswordResetEmail = async (user, token, retryCount = 0) => {
     const mailOptions = {
       from: process.env.EMAIL_USER,
       to: user.email,
-      subject: 'Cash Logix - Password Reset Request',
+      subject: 'Cash Logix - إعادة تعيين كلمة المرور',
       html: `
-        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-          <h2 style="color: #2563eb;">Password Reset Request</h2>
-          <p>Hello ${user.firstName},</p>
-          <p>You requested a password reset for your Cash Logix account. Click the button below to reset your password:</p>
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; direction: rtl;">
+          <h2 style="color: #dc2626; text-align: center;">إعادة تعيين كلمة المرور</h2>
+          <p>أهلاً ${user.firstName}،</p>
+          <p>انت طلبت إعادة تعيين كلمة المرور لحسابك في Cash Logix. اضغط على الزر ده عشان تعيد تعيين كلمة المرور:</p>
           <div style="text-align: center; margin: 30px 0;">
-            <a href="${resetUrl}" style="background-color: #dc2626; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; display: inline-block;">Reset Password</a>
+            <a href="${resetUrl}" style="background-color: #dc2626; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; display: inline-block;">إعادة تعيين كلمة المرور</a>
           </div>
-          <p>If the button doesn't work, copy and paste this link into your browser:</p>
-          <p style="word-break: break-all; color: #666;">${resetUrl}</p>
-          <p>This link will expire in 1 hour.</p>
-          <p><strong>If you didn't request this password reset, please ignore this email and your password will remain unchanged.</strong></p>
+          <p>لو الزر مش شغال، انسخ الرابط ده وافتحه في المتصفح:</p>
+          <p style="word-break: break-all; color: #666; background: #f5f5f5; padding: 10px; border-radius: 5px;">${resetUrl}</p>
+          <p>الرابط ده هيبقى صالح لمدة ساعة واحدة بس.</p>
+          <p style="background: #fef2f2; padding: 15px; border-radius: 5px; border-right: 4px solid #dc2626;"><strong>لو انت مش اللي طلب إعادة تعيين كلمة المرور، متفتحش البريد ده وكلمة المرور هتفضل زي ما هي.</strong></p>
           <hr style="margin: 30px 0; border: none; border-top: 1px solid #eee;">
-          <p style="color: #666; font-size: 12px;">This is an automated message from Cash Logix.</p>
+          <p style="color: #666; font-size: 12px; text-align: center;">دي رسالة تلقائية من Cash Logix.</p>
         </div>
       `
     };
 
-    await sendEmailWithFallback(mailOptions);
-    console.log(`Password reset email sent successfully to ${user.email}`);
+    // Try advanced email service first
+    try {
+      await sendEmailWithFallback(mailOptions);
+      console.log(`Password reset email sent successfully to ${user.email}`);
+      return;
+    } catch (advancedError) {
+      console.error('Advanced email service failed, trying simple service:', advancedError.message);
+
+      // Try simple email service as fallback
+      try {
+        await sendSimpleEmail(mailOptions);
+        console.log(`Password reset email sent successfully via simple service to ${user.email}`);
+        return;
+      } catch (simpleError) {
+        console.error('Simple email service also failed:', simpleError.message);
+        throw simpleError;
+      }
+    }
 
   } catch (error) {
     console.error(`Password reset email sending failed (attempt ${retryCount + 1}/${maxRetries}):`, error.message);
