@@ -199,13 +199,11 @@ router.post('/register', [
       emailVerificationExpires: Date.now() + 24 * 60 * 60 * 1000 // 24 hours
     });
 
-    // Send verification email
-    try {
-      await sendVerificationEmail(user, emailVerificationToken);
-    } catch (emailError) {
-      console.error('Email sending failed:', emailError);
-      // Don't fail registration if email fails
-    }
+    // Send verification email asynchronously (don't wait for it)
+    sendVerificationEmail(user, emailVerificationToken).catch(emailError => {
+      console.error('Email sending failed (async):', emailError);
+      // Email failure is logged but doesn't affect registration
+    });
 
     // Generate token (but user still needs to verify email)
     const token = user.generateAuthToken();
@@ -709,14 +707,11 @@ router.post('/resend-verification', [
     user.lastVerificationEmailSent = now; // Update last sent time
     await user.save();
 
-    // Send verification email
-    try {
-      await sendVerificationEmail(user, emailVerificationToken);
-    } catch (emailError) {
-      console.error('Email sending failed:', emailError);
-      // Don't fail the request if email fails - still return success
-      // User can try again later
-    }
+    // Send verification email asynchronously (don't wait for it)
+    sendVerificationEmail(user, emailVerificationToken).catch(emailError => {
+      console.error('Resend verification email sending failed (async):', emailError);
+      // Email failure is logged but doesn't affect the response
+    });
 
     res.json({
       success: true,
@@ -777,14 +772,11 @@ router.post('/forgot-password', [
     user.passwordResetExpires = Date.now() + 60 * 60 * 1000; // 1 hour
     await user.save();
 
-    // Send reset email
-    try {
-      await sendPasswordResetEmail(user, resetToken);
-    } catch (emailError) {
-      console.error('Email sending failed:', emailError);
-      // Don't fail the request if email fails - still return success for security
-      // This prevents email enumeration attacks
-    }
+    // Send reset email asynchronously (don't wait for it)
+    sendPasswordResetEmail(user, resetToken).catch(emailError => {
+      console.error('Password reset email sending failed (async):', emailError);
+      // Email failure is logged but doesn't affect the response
+    });
 
     res.json({
       success: true,
