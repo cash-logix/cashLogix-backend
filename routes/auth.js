@@ -4,12 +4,45 @@ const crypto = require('crypto');
 const nodemailer = require('nodemailer');
 const User = require('../models/User');
 const { protect } = require('../middleware/auth');
-const { sendEmailWithFallback } = require('../services/emailService');
+const { sendEmailWithFallback, testGmailConnection, getGmailAccountInfo } = require('../services/emailService');
 const { sendSimpleEmail } = require('../services/simpleEmailService');
 
 const router = express.Router();
 
-// Email transporter setup
+// Test Gmail SMTP connection
+router.get('/test-email', async (req, res) => {
+  try {
+    console.log('Testing Gmail SMTP connection...');
+
+    // Test SMTP connection
+    const connectionTest = await testGmailConnection();
+
+    // Get account info
+    const accountInfo = await getGmailAccountInfo();
+
+    res.json({
+      success: true,
+      message: 'Gmail SMTP test completed',
+      connectionTest,
+      accountInfo: accountInfo ? {
+        email: accountInfo.email,
+        hasPassword: accountInfo.hasPassword
+      } : null
+    });
+
+  } catch (error) {
+    console.error('Gmail SMTP test failed:', error);
+    res.status(500).json({
+      success: false,
+      error: {
+        message: 'Gmail SMTP test failed',
+        details: error.message
+      }
+    });
+  }
+});
+
+// Email transporter setup (legacy - not used with API)
 const createTransporter = () => {
   return nodemailer.createTransport({
     service: 'gmail',
@@ -232,10 +265,18 @@ router.post('/register', [
       emailVerificationExpires: Date.now() + 24 * 60 * 60 * 1000 // 24 hours
     });
 
-    // Send verification email asynchronously (don't wait for it)
-    sendVerificationEmail(user, emailVerificationToken).catch(emailError => {
+    // Send verification email asynchronously and handle auto-verification on failure
+    sendVerificationEmail(user, emailVerificationToken).catch(async (emailError) => {
       console.error('Email sending failed (async):', emailError);
-      // Email failure is logged but doesn't affect registration
+
+      // If email sending fails, auto-verify the user
+      try {
+        user.isEmailVerified = true;
+        await user.save();
+        console.log(`User ${user.email} auto-verified due to email sending failure`);
+      } catch (updateError) {
+        console.error('Failed to auto-verify user:', updateError);
+      }
     });
 
     // Generate token (but user still needs to verify email)
@@ -740,10 +781,18 @@ router.post('/resend-verification', [
     user.lastVerificationEmailSent = now; // Update last sent time
     await user.save();
 
-    // Send verification email asynchronously (don't wait for it)
-    sendVerificationEmail(user, emailVerificationToken).catch(emailError => {
+    // Send verification email asynchronously and handle auto-verification on failure
+    sendVerificationEmail(user, emailVerificationToken).catch(async (emailError) => {
       console.error('Resend verification email sending failed (async):', emailError);
-      // Email failure is logged but doesn't affect the response
+
+      // If email sending fails, auto-verify the user
+      try {
+        user.isEmailVerified = true;
+        await user.save();
+        console.log(`User ${user.email} auto-verified due to resend email failure`);
+      } catch (updateError) {
+        console.error('Failed to auto-verify user during resend:', updateError);
+      }
     });
 
     res.json({

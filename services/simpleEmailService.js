@@ -1,8 +1,8 @@
 const nodemailer = require('nodemailer');
 
-// Ultra-simple email service optimized for Railway
+// Ultra-simple Gmail service optimized for Railway
 const createSimpleEmailService = () => {
-  // Minimal configuration that works best in Railway
+  // Minimal Gmail configuration that works best in Railway
   const config = {
     host: 'smtp.gmail.com',
     port: 587,

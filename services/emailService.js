@@ -53,7 +53,7 @@ const processEmailQueue = async () => {
     const emailItem = emailQueue[i];
 
     try {
-      const transporter = createGmailTransporter();
+      const transporter = createGmailTransport();
       await transporter.sendMail(emailItem.mailOptions);
 
       console.log(`Successfully sent queued email to ${emailItem.mailOptions.to}`);
@@ -82,8 +82,8 @@ loadEmailQueue();
 // Process queue every 5 minutes
 setInterval(processEmailQueue, 5 * 60 * 1000);
 
-// Gmail SMTP configurations optimized for Railway (free)
-const createGmailTransporter = () => {
+// Gmail SMTP configurations optimized for Railway
+const createGmailTransport = () => {
   // Try different Gmail configurations optimized for Railway
   const configs = [
     // Configuration 1: Gmail SMTP with minimal settings (best for Railway)
@@ -165,7 +165,7 @@ const sendEmailWithFallback = async (mailOptions, retryCount = 0) => {
   const maxRetries = 3;
 
   try {
-    const transporter = createGmailTransporter();
+    const transporter = createGmailTransport();
 
     // Skip connection test in production to avoid timeouts
     const isProduction = process.env.NODE_ENV === 'production';
@@ -204,10 +204,51 @@ const sendEmailWithFallback = async (mailOptions, retryCount = 0) => {
   }
 };
 
+// Test Gmail connection
+const testGmailConnection = async () => {
+  try {
+    const transporter = createGmailTransport();
+
+    // Quick connection test
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('Connection test timeout')), 10000);
+    });
+
+    await Promise.race([transporter.verify(), timeoutPromise]);
+    console.log('Gmail connection test successful');
+    return true;
+
+  } catch (error) {
+    console.error('Gmail connection test failed:', error.message);
+    return false;
+  }
+};
+
+// Get Gmail account info
+const getGmailAccountInfo = async () => {
+  try {
+    console.log('Gmail Account Info:', {
+      email: process.env.EMAIL_USER,
+      hasPassword: !!process.env.EMAIL_PASS
+    });
+
+    return {
+      email: process.env.EMAIL_USER,
+      hasPassword: !!process.env.EMAIL_PASS
+    };
+
+  } catch (error) {
+    console.error('Error getting Gmail account info:', error.message);
+    return null;
+  }
+};
+
 module.exports = {
-  createGmailTransporter,
+  createGmailTransport,
   sendEmailWithFallback,
   addToQueue,
   processEmailQueue,
-  loadEmailQueue
+  loadEmailQueue,
+  testGmailConnection,
+  getGmailAccountInfo
 };
