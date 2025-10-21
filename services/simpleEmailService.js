@@ -11,10 +11,10 @@ const createSimpleEmailService = () => {
       user: process.env.EMAIL_USER,
       pass: process.env.EMAIL_PASS
     },
-    // Ultra-minimal configuration for Railway
-    connectionTimeout: 10000, // 10 seconds
-    greetingTimeout: 3000,    // 3 seconds
-    socketTimeout: 10000,     // 10 seconds
+    // Ultra-fast configuration for Railway
+    connectionTimeout: 2000, // 2 seconds (was 10)
+    greetingTimeout: 1000,   // 1 second (was 3)
+    socketTimeout: 3000,     // 3 seconds (was 10)
     // Disable everything that might cause issues
     pool: false,
     maxConnections: 1,

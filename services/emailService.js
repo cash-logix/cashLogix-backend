@@ -79,14 +79,14 @@ const processEmailQueue = async () => {
 // Initialize queue processing
 loadEmailQueue();
 
-// Process queue every 5 minutes
-setInterval(processEmailQueue, 5 * 60 * 1000);
+// Process queue every 1 minute (faster processing)
+setInterval(processEmailQueue, 1 * 60 * 1000);
 
-// Gmail SMTP configurations optimized for Railway
+// Gmail SMTP configurations optimized for fast failure detection
 const createGmailTransport = () => {
-  // Try different Gmail configurations optimized for Railway
+  // Ultra-fast failure detection for Railway
   const configs = [
-    // Configuration 1: Gmail SMTP with minimal settings (best for Railway)
+    // Configuration 1: Gmail SMTP with ultra-fast timeouts
     {
       host: 'smtp.gmail.com',
       port: 587,
@@ -95,9 +95,9 @@ const createGmailTransport = () => {
         user: process.env.EMAIL_USER,
         pass: process.env.EMAIL_PASS
       },
-      connectionTimeout: 15000, // 15 seconds
-      greetingTimeout: 5000,    // 5 seconds
-      socketTimeout: 15000,     // 15 seconds
+      connectionTimeout: 3000,  // 3 seconds (was 15)
+      greetingTimeout: 2000,    // 2 seconds (was 5)
+      socketTimeout: 5000,      // 5 seconds (was 15)
       pool: false,              // Disable pooling
       maxConnections: 1,        // Single connection
       maxMessages: 1,           // One message per connection
@@ -106,7 +106,7 @@ const createGmailTransport = () => {
         ciphers: 'SSLv3'
       }
     },
-    // Configuration 2: Gmail SMTP with SSL
+    // Configuration 2: Gmail SMTP with SSL (ultra-fast)
     {
       host: 'smtp.gmail.com',
       port: 465,
@@ -115,9 +115,9 @@ const createGmailTransport = () => {
         user: process.env.EMAIL_USER,
         pass: process.env.EMAIL_PASS
       },
-      connectionTimeout: 15000,
-      greetingTimeout: 5000,
-      socketTimeout: 15000,
+      connectionTimeout: 3000,  // 3 seconds
+      greetingTimeout: 2000,    // 2 seconds
+      socketTimeout: 5000,      // 5 seconds
       pool: false,
       maxConnections: 1,
       maxMessages: 1,
@@ -126,16 +126,16 @@ const createGmailTransport = () => {
         ciphers: 'SSLv3'
       }
     },
-    // Configuration 3: Gmail service with minimal settings
+    // Configuration 3: Gmail service (ultra-fast)
     {
       service: 'gmail',
       auth: {
         user: process.env.EMAIL_USER,
         pass: process.env.EMAIL_PASS
       },
-      connectionTimeout: 15000,
-      greetingTimeout: 5000,
-      socketTimeout: 15000,
+      connectionTimeout: 3000,  // 3 seconds
+      greetingTimeout: 2000,    // 2 seconds
+      socketTimeout: 5000,      // 5 seconds
       pool: false,
       maxConnections: 1,
       maxMessages: 1,
@@ -160,9 +160,9 @@ const createGmailTransport = () => {
   }
 };
 
-// Send email with Gmail SMTP optimized for Railway
+// Send email with Gmail SMTP optimized for fast failure
 const sendEmailWithFallback = async (mailOptions, retryCount = 0) => {
-  const maxRetries = 3;
+  const maxRetries = 1; // Reduced from 3 to 1
 
   try {
     const transporter = createGmailTransport();
@@ -170,9 +170,9 @@ const sendEmailWithFallback = async (mailOptions, retryCount = 0) => {
     // Skip connection test in production to avoid timeouts
     const isProduction = process.env.NODE_ENV === 'production';
     if (!isProduction) {
-      // Quick connection test with timeout
+      // Ultra-quick connection test with timeout
       const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => reject(new Error('Connection test timeout')), 5000); // 5 seconds
+        setTimeout(() => reject(new Error('Connection test timeout')), 2000); // 2 seconds (was 5)
       });
 
       try {
@@ -192,8 +192,8 @@ const sendEmailWithFallback = async (mailOptions, retryCount = 0) => {
     console.error(`Email sending failed (attempt ${retryCount + 1}/${maxRetries}):`, error.message);
 
     if (retryCount < maxRetries - 1) {
-      console.log(`Retrying email send in 10 seconds...`);
-      await new Promise(resolve => setTimeout(resolve, 10000));
+      console.log(`Retrying email send in 3 seconds...`); // Reduced from 10 to 3 seconds
+      await new Promise(resolve => setTimeout(resolve, 3000));
       return sendEmailWithFallback(mailOptions, retryCount + 1);
     } else {
       console.error('Email sending failed after all retries, adding to queue');
