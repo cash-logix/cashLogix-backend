@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const nodemailer = require('nodemailer');
 const User = require('../models/User');
 const { protect } = require('../middleware/auth');
+const { sendEmailWithFallback } = require('../services/emailService');
 
 const router = express.Router();
 
@@ -14,67 +15,111 @@ const createTransporter = () => {
     auth: {
       user: process.env.EMAIL_USER,
       pass: process.env.EMAIL_PASS
-    }
+    },
+    // Add timeout and connection settings for production
+    connectionTimeout: 60000, // 60 seconds
+    greetingTimeout: 30000,   // 30 seconds
+    socketTimeout: 60000,     // 60 seconds
+    pool: true,
+    maxConnections: 5,
+    maxMessages: 100,
+    rateDelta: 20000,         // 20 seconds
+    rateLimit: 5,             // 5 emails per rateDelta
+    // Retry settings
+    retryDelay: 5000,         // 5 seconds between retries
+    retryAttempts: 3
   });
 };
 
-// Send verification email
-const sendVerificationEmail = async (user, token) => {
-  const transporter = createTransporter();
-  const verificationUrl = `${process.env.FRONTEND_URL}/verify-email?token=${token}`;
+// Send verification email with retry logic
+const sendVerificationEmail = async (user, token, retryCount = 0) => {
+  const maxRetries = 3;
 
-  const mailOptions = {
-    from: process.env.EMAIL_USER,
-    to: user.email,
-    subject: 'Cash Logix - Verify Your Email',
-    html: `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-        <h2 style="color: #2563eb;">Welcome to Cash Logix!</h2>
-        <p>Hello ${user.firstName},</p>
-        <p>Thank you for registering with Cash Logix. Please verify your email address by clicking the button below:</p>
-        <div style="text-align: center; margin: 30px 0;">
-          <a href="${verificationUrl}" style="background-color: #2563eb; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; display: inline-block;">Verify Email</a>
+  try {
+    const verificationUrl = `${process.env.FRONTEND_URL}/verify-email?token=${token}`;
+
+    const mailOptions = {
+      from: process.env.EMAIL_USER,
+      to: user.email,
+      subject: 'Cash Logix - Verify Your Email',
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h2 style="color: #2563eb;">Welcome to Cash Logix!</h2>
+          <p>Hello ${user.firstName},</p>
+          <p>Thank you for registering with Cash Logix. Please verify your email address by clicking the button below:</p>
+          <div style="text-align: center; margin: 30px 0;">
+            <a href="${verificationUrl}" style="background-color: #2563eb; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; display: inline-block;">Verify Email</a>
+          </div>
+          <p>If the button doesn't work, copy and paste this link into your browser:</p>
+          <p style="word-break: break-all; color: #666;">${verificationUrl}</p>
+          <p>This link will expire in 24 hours.</p>
+          <hr style="margin: 30px 0; border: none; border-top: 1px solid #eee;">
+          <p style="color: #666; font-size: 12px;">If you didn't create an account with Cash Logix, please ignore this email.</p>
         </div>
-        <p>If the button doesn't work, copy and paste this link into your browser:</p>
-        <p style="word-break: break-all; color: #666;">${verificationUrl}</p>
-        <p>This link will expire in 24 hours.</p>
-        <hr style="margin: 30px 0; border: none; border-top: 1px solid #eee;">
-        <p style="color: #666; font-size: 12px;">If you didn't create an account with Cash Logix, please ignore this email.</p>
-      </div>
-    `
-  };
+      `
+    };
 
-  await transporter.sendMail(mailOptions);
+    await sendEmailWithFallback(mailOptions);
+    console.log(`Verification email sent successfully to ${user.email}`);
+
+  } catch (error) {
+    console.error(`Email sending failed (attempt ${retryCount + 1}/${maxRetries}):`, error.message);
+
+    if (retryCount < maxRetries - 1) {
+      console.log(`Retrying email send in 5 seconds...`);
+      await new Promise(resolve => setTimeout(resolve, 5000));
+      return sendVerificationEmail(user, token, retryCount + 1);
+    } else {
+      console.error('Email sending failed after all retries:', error);
+      throw error;
+    }
+  }
 };
 
-// Send password reset email
-const sendPasswordResetEmail = async (user, token) => {
-  const transporter = createTransporter();
-  const resetUrl = `${process.env.FRONTEND_URL}/reset-password?token=${token}`;
+// Send password reset email with retry logic
+const sendPasswordResetEmail = async (user, token, retryCount = 0) => {
+  const maxRetries = 3;
 
-  const mailOptions = {
-    from: process.env.EMAIL_USER,
-    to: user.email,
-    subject: 'Cash Logix - Password Reset Request',
-    html: `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-        <h2 style="color: #2563eb;">Password Reset Request</h2>
-        <p>Hello ${user.firstName},</p>
-        <p>You requested a password reset for your Cash Logix account. Click the button below to reset your password:</p>
-        <div style="text-align: center; margin: 30px 0;">
-          <a href="${resetUrl}" style="background-color: #dc2626; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; display: inline-block;">Reset Password</a>
+  try {
+    const resetUrl = `${process.env.FRONTEND_URL}/reset-password?token=${token}`;
+
+    const mailOptions = {
+      from: process.env.EMAIL_USER,
+      to: user.email,
+      subject: 'Cash Logix - Password Reset Request',
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h2 style="color: #2563eb;">Password Reset Request</h2>
+          <p>Hello ${user.firstName},</p>
+          <p>You requested a password reset for your Cash Logix account. Click the button below to reset your password:</p>
+          <div style="text-align: center; margin: 30px 0;">
+            <a href="${resetUrl}" style="background-color: #dc2626; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; display: inline-block;">Reset Password</a>
+          </div>
+          <p>If the button doesn't work, copy and paste this link into your browser:</p>
+          <p style="word-break: break-all; color: #666;">${resetUrl}</p>
+          <p>This link will expire in 1 hour.</p>
+          <p><strong>If you didn't request this password reset, please ignore this email and your password will remain unchanged.</strong></p>
+          <hr style="margin: 30px 0; border: none; border-top: 1px solid #eee;">
+          <p style="color: #666; font-size: 12px;">This is an automated message from Cash Logix.</p>
         </div>
-        <p>If the button doesn't work, copy and paste this link into your browser:</p>
-        <p style="word-break: break-all; color: #666;">${resetUrl}</p>
-        <p>This link will expire in 1 hour.</p>
-        <p><strong>If you didn't request this password reset, please ignore this email and your password will remain unchanged.</strong></p>
-        <hr style="margin: 30px 0; border: none; border-top: 1px solid #eee;">
-        <p style="color: #666; font-size: 12px;">This is an automated message from Cash Logix.</p>
-      </div>
-    `
-  };
+      `
+    };
 
-  await transporter.sendMail(mailOptions);
+    await sendEmailWithFallback(mailOptions);
+    console.log(`Password reset email sent successfully to ${user.email}`);
+
+  } catch (error) {
+    console.error(`Password reset email sending failed (attempt ${retryCount + 1}/${maxRetries}):`, error.message);
+
+    if (retryCount < maxRetries - 1) {
+      console.log(`Retrying password reset email send in 5 seconds...`);
+      await new Promise(resolve => setTimeout(resolve, 5000));
+      return sendPasswordResetEmail(user, token, retryCount + 1);
+    } else {
+      console.error('Password reset email sending failed after all retries:', error);
+      throw error;
+    }
+  }
 };
 
 // @desc    Register user
@@ -669,14 +714,8 @@ router.post('/resend-verification', [
       await sendVerificationEmail(user, emailVerificationToken);
     } catch (emailError) {
       console.error('Email sending failed:', emailError);
-      return res.status(500).json({
-        success: false,
-        error: {
-          message: 'Failed to send verification email',
-          arabic: 'فشل في إرسال بريد التحقق',
-          statusCode: 500
-        }
-      });
+      // Don't fail the request if email fails - still return success
+      // User can try again later
     }
 
     res.json({
@@ -743,14 +782,8 @@ router.post('/forgot-password', [
       await sendPasswordResetEmail(user, resetToken);
     } catch (emailError) {
       console.error('Email sending failed:', emailError);
-      return res.status(500).json({
-        success: false,
-        error: {
-          message: 'Failed to send password reset email',
-          arabic: 'فشل في إرسال بريد إعادة تعيين كلمة المرور',
-          statusCode: 500
-        }
-      });
+      // Don't fail the request if email fails - still return success for security
+      // This prevents email enumeration attacks
     }
 
     res.json({

@@ -1,151 +1,133 @@
 const nodemailer = require('nodemailer');
 
-// Email configuration
-const createTransporter = () => {
-  return nodemailer.createTransport({
-    service: 'gmail', // You can use other services like SendGrid, Mailgun, etc.
-    auth: {
-      user: process.env.EMAIL_USER || 'your-email@gmail.com',
-      pass: process.env.EMAIL_PASS || 'your-app-password'
+// Alternative email configurations for production
+const createProductionTransporter = () => {
+  // Try different configurations based on environment
+  const configs = [
+    // Configuration 1: Gmail with enhanced settings
+    {
+      service: 'gmail',
+      auth: {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASS
+      },
+      connectionTimeout: 60000,
+      greetingTimeout: 30000,
+      socketTimeout: 60000,
+      pool: true,
+      maxConnections: 2,
+      maxMessages: 50,
+      rateDelta: 20000,
+      rateLimit: 3,
+      secure: true,
+      tls: {
+        rejectUnauthorized: false
+      }
+    },
+    // Configuration 2: SMTP with explicit settings
+    {
+      host: 'smtp.gmail.com',
+      port: 587,
+      secure: false,
+      auth: {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASS
+      },
+      connectionTimeout: 60000,
+      greetingTimeout: 30000,
+      socketTimeout: 60000,
+      pool: true,
+      maxConnections: 2,
+      maxMessages: 50,
+      rateDelta: 20000,
+      rateLimit: 3,
+      tls: {
+        rejectUnauthorized: false
+      }
+    },
+    // Configuration 3: SMTP with SSL
+    {
+      host: 'smtp.gmail.com',
+      port: 465,
+      secure: true,
+      auth: {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASS
+      },
+      connectionTimeout: 60000,
+      greetingTimeout: 30000,
+      socketTimeout: 60000,
+      pool: true,
+      maxConnections: 2,
+      maxMessages: 50,
+      rateDelta: 20000,
+      rateLimit: 3,
+      tls: {
+        rejectUnauthorized: false
+      }
     }
-  });
-};
+  ];
 
-// Send invitation email
-const sendInvitationEmail = async (email, invitationData) => {
-  try {
-    const transporter = createTransporter();
-
-    const mailOptions = {
-      from: process.env.EMAIL_FROM || 'noreply@cashlogix.com',
-      to: email,
-      subject: `Invitation to join ${invitationData.companyName}`,
-      html: `
-        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-          <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; text-align: center;">
-            <h1 style="color: white; margin: 0; font-size: 28px;">Cash Logix</h1>
-            <p style="color: white; margin: 10px 0 0 0; font-size: 16px;">Financial Management Platform</p>
-          </div>
-          
-          <div style="padding: 30px; background: #f8f9fa;">
-            <h2 style="color: #333; margin-bottom: 20px;">You're Invited!</h2>
-            
-            <p style="color: #666; font-size: 16px; line-height: 1.6;">
-              You have been invited to join <strong>${invitationData.companyName}</strong> as a <strong>${invitationData.role}</strong>.
-            </p>
-            
-            <div style="background: white; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #667eea;">
-              <h3 style="color: #333; margin-top: 0;">Invitation Details:</h3>
-              <ul style="color: #666; padding-left: 20px;">
-                <li><strong>Company:</strong> ${invitationData.companyName}</li>
-                <li><strong>Role:</strong> ${invitationData.role}</li>
-                <li><strong>Department:</strong> ${invitationData.department}</li>
-                <li><strong>Position:</strong> ${invitationData.position}</li>
-                <li><strong>Invited by:</strong> ${invitationData.invitedBy}</li>
-              </ul>
-            </div>
-            
-            <div style="text-align: center; margin: 30px 0;">
-              <a href="${invitationData.invitationLink}" 
-                 style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
-                        color: white; 
-                        padding: 15px 30px; 
-                        text-decoration: none; 
-                        border-radius: 25px; 
-                        font-weight: bold; 
-                        font-size: 16px;
-                        display: inline-block;">
-                Accept Invitation
-              </a>
-            </div>
-            
-            <p style="color: #999; font-size: 14px; text-align: center;">
-              This invitation will expire in 7 days.<br>
-              If you didn't expect this invitation, you can safely ignore this email.
-            </p>
-            
-            <div style="border-top: 1px solid #eee; margin-top: 30px; padding-top: 20px;">
-              <p style="color: #999; font-size: 12px; text-align: center;">
-                This email was sent by Cash Logix. If you have any questions, please contact your company administrator.
-              </p>
-            </div>
-          </div>
-        </div>
-      `
-    };
-
-    const result = await transporter.sendMail(mailOptions);
-    console.log('Invitation email sent:', result.messageId);
-    return result;
-  } catch (error) {
-    console.error('Error sending invitation email:', error);
-    throw error;
+  // Try configurations in order
+  for (let i = 0; i < configs.length; i++) {
+    try {
+      const transporter = nodemailer.createTransport(configs[i]);
+      console.log(`Email configuration ${i + 1} created successfully`);
+      return transporter;
+    } catch (error) {
+      console.error(`Email configuration ${i + 1} failed:`, error.message);
+      if (i === configs.length - 1) {
+        throw error;
+      }
+    }
   }
 };
 
-// Send notification email to company admin
-const sendNotificationEmail = async (adminEmail, notificationData) => {
+// Test email connection
+const testEmailConnection = async (transporter) => {
   try {
-    const transporter = createTransporter();
+    await transporter.verify();
+    console.log('Email connection verified successfully');
+    return true;
+  } catch (error) {
+    console.error('Email connection verification failed:', error.message);
+    return false;
+  }
+};
 
-    const mailOptions = {
-      from: process.env.EMAIL_FROM || 'noreply@cashlogix.com',
-      to: adminEmail,
-      subject: `Employee ${notificationData.action} - ${notificationData.employeeName}`,
-      html: `
-        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-          <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; text-align: center;">
-            <h1 style="color: white; margin: 0; font-size: 28px;">Cash Logix</h1>
-            <p style="color: white; margin: 10px 0 0 0; font-size: 16px;">Notification</p>
-          </div>
-          
-          <div style="padding: 30px; background: #f8f9fa;">
-            <h2 style="color: #333; margin-bottom: 20px;">Employee ${notificationData.action}</h2>
-            
-            <p style="color: #666; font-size: 16px; line-height: 1.6;">
-              <strong>${notificationData.employeeName}</strong> has ${notificationData.action.toLowerCase()} the invitation to join your company.
-            </p>
-            
-            <div style="background: white; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #667eea;">
-              <h3 style="color: #333; margin-top: 0;">Details:</h3>
-              <ul style="color: #666; padding-left: 20px;">
-                <li><strong>Employee:</strong> ${notificationData.employeeName}</li>
-                <li><strong>Email:</strong> ${notificationData.employeeEmail}</li>
-                <li><strong>Role:</strong> ${notificationData.role}</li>
-                <li><strong>Department:</strong> ${notificationData.department}</li>
-                <li><strong>Action:</strong> ${notificationData.action}</li>
-                <li><strong>Date:</strong> ${new Date().toLocaleDateString()}</li>
-              </ul>
-            </div>
-            
-            <div style="text-align: center; margin: 30px 0;">
-              <a href="${process.env.FRONTEND_URL || 'http://localhost:5173'}/companies/${notificationData.companyId}/employees" 
-                 style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
-                        color: white; 
-                        padding: 15px 30px; 
-                        text-decoration: none; 
-                        border-radius: 25px; 
-                        font-weight: bold; 
-                        font-size: 16px;
-                        display: inline-block;">
-                View Employee Management
-              </a>
-            </div>
-          </div>
-        </div>
-      `
-    };
+// Send email with multiple transporter fallback
+const sendEmailWithFallback = async (mailOptions, retryCount = 0) => {
+  const maxRetries = 3;
+
+  try {
+    const transporter = createProductionTransporter();
+
+    // Test connection first
+    const isConnected = await testEmailConnection(transporter);
+    if (!isConnected) {
+      throw new Error('Email connection verification failed');
+    }
 
     const result = await transporter.sendMail(mailOptions);
-    console.log('Notification email sent:', result.messageId);
+    console.log(`Email sent successfully to ${mailOptions.to}`);
     return result;
+
   } catch (error) {
-    console.error('Error sending notification email:', error);
-    throw error;
+    console.error(`Email sending failed (attempt ${retryCount + 1}/${maxRetries}):`, error.message);
+
+    if (retryCount < maxRetries - 1) {
+      console.log(`Retrying email send in 10 seconds...`);
+      await new Promise(resolve => setTimeout(resolve, 10000));
+      return sendEmailWithFallback(mailOptions, retryCount + 1);
+    } else {
+      console.error('Email sending failed after all retries:', error);
+      throw error;
+    }
   }
 };
 
 module.exports = {
-  sendInvitationEmail,
-  sendNotificationEmail
+  createProductionTransporter,
+  testEmailConnection,
+  sendEmailWithFallback
 };
