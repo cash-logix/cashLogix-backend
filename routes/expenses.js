@@ -1005,7 +1005,7 @@ router.post('/bulk', protect, checkEditPermission, [
 // Helper function to get predefined categories
 function getPredefinedCategories(accountType, type) {
   const baseCategories = [
-    'طعام ومشروبات',
+    'طعام',
     'مواصلات',
     'تسوق',
     'ترفيه',

@@ -80,7 +80,7 @@ categorySchema.methods.incrementUsage = function () {
 // Static method to get predefined categories
 categorySchema.statics.getPredefinedCategories = function () {
   return [
-    'طعام ومشروبات',
+    'طعام',
     'مواصلات',
     'تسوق',
     'ترفيه',
