@@ -663,8 +663,8 @@ const companySchema = new mongoose.Schema({
 
 // Indexes for performance
 companySchema.index({ owner: 1 });
-companySchema.index({ 'businessInfo.registrationNumber': 1 });
-companySchema.index({ 'businessInfo.taxNumber': 1 });
+// Note: businessInfo.registrationNumber index is automatically created due to unique: true in schema
+// Note: businessInfo.taxNumber index is automatically created due to unique: true in schema
 companySchema.index({ 'contact.email': 1 });
 companySchema.index({ status: 1 });
 companySchema.index({ 'subscription.status': 1 });

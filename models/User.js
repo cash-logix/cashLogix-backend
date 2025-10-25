@@ -83,6 +83,19 @@ const userSchema = new mongoose.Schema({
     paymentMethod: {
       type: String,
       enum: ['vodafone_cash', 'instapay', 'bank_transfer']
+    },
+    // Free trial information
+    freeTrial: {
+      isActive: {
+        type: Boolean,
+        default: false
+      },
+      startDate: Date,
+      endDate: Date,
+      used: {
+        type: Boolean,
+        default: false
+      }
     }
   },
 
@@ -157,6 +170,11 @@ const userSchema = new mongoose.Schema({
   lastVerificationEmailSent: Date,
   passwordResetToken: String,
   passwordResetExpires: Date,
+  // First login tracking
+  firstLoginAfterVerification: {
+    type: Boolean,
+    default: true
+  },
   twoFactorEnabled: {
     type: Boolean,
     default: false
@@ -222,7 +240,7 @@ const userSchema = new mongoose.Schema({
 });
 
 // Indexes for performance
-userSchema.index({ email: 1 });
+// Note: email index is automatically created due to unique: true in schema
 userSchema.index({ phone: 1 });
 userSchema.index({ accountType: 1 });
 userSchema.index({ 'subscription.plan': 1 });
@@ -237,6 +255,38 @@ userSchema.virtual('fullName').get(function () {
 // Virtual for account age
 userSchema.virtual('accountAge').get(function () {
   return Math.floor((Date.now() - this.createdAt) / (1000 * 60 * 60 * 24));
+});
+
+// Virtual to check if subscription is expired
+userSchema.virtual('isSubscriptionExpired').get(function () {
+  if (this.subscription.plan === 'free') return false;
+  if (!this.subscription.endDate) return false;
+  return new Date() > this.subscription.endDate;
+});
+
+// Virtual to get days until subscription expires
+userSchema.virtual('daysUntilExpiry').get(function () {
+  if (this.subscription.plan === 'free' || !this.subscription.endDate) return null;
+  const now = new Date();
+  const expiry = new Date(this.subscription.endDate);
+  const diffTime = expiry - now;
+  return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+});
+
+// Virtual to check if user is in free trial
+userSchema.virtual('isInFreeTrial').get(function () {
+  if (!this.subscription.freeTrial.isActive) return false;
+  if (!this.subscription.freeTrial.endDate) return false;
+  return new Date() <= this.subscription.freeTrial.endDate;
+});
+
+// Virtual to get days until free trial expires
+userSchema.virtual('daysUntilTrialExpiry').get(function () {
+  if (!this.subscription.freeTrial.isActive || !this.subscription.freeTrial.endDate) return null;
+  const now = new Date();
+  const expiry = new Date(this.subscription.freeTrial.endDate);
+  const diffTime = expiry - now;
+  return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
 });
 
 // Pre-save middleware to hash password
@@ -261,6 +311,53 @@ userSchema.pre('save', function (next) {
       Math.random().toString(36).substring(2, 15);
     this.emailVerificationExpires = Date.now() + 24 * 60 * 60 * 1000; // 24 hours
   }
+  next();
+});
+
+// Pre-save middleware to handle subscription expiration
+userSchema.pre('save', function (next) {
+  // Check if subscription is expired and not already free
+  if (this.subscription.plan !== 'free' &&
+    this.subscription.endDate &&
+    new Date() > this.subscription.endDate) {
+
+    console.log(`🔄 Auto-downgrading user ${this.email} from ${this.subscription.plan} to free plan (subscription expired)`);
+
+    // Downgrade to free plan
+    this.subscription.plan = 'free';
+    this.subscription.status = 'expired';
+    this.subscription.endDate = null;
+    this.subscription.autoRenew = false;
+  }
+
+  next();
+});
+
+// Pre-save middleware to start free trial for new users
+userSchema.pre('save', function (next) {
+  // Start free trial for new users who haven't used it yet
+  if (this.isNew && !this.subscription.freeTrial.used) {
+    console.log(`🎁 Starting free trial for new user ${this.email}`);
+
+    this.subscription.freeTrial.isActive = true;
+    this.subscription.freeTrial.startDate = new Date();
+
+    // Set trial end date to 1 month from now
+    const trialEndDate = new Date();
+    trialEndDate.setMonth(trialEndDate.getMonth() + 1);
+    this.subscription.freeTrial.endDate = trialEndDate;
+  }
+
+  // Check if free trial is expired
+  if (this.subscription.freeTrial.isActive &&
+    this.subscription.freeTrial.endDate &&
+    new Date() > this.subscription.freeTrial.endDate) {
+
+    console.log(`⏰ Free trial expired for user ${this.email}`);
+    this.subscription.freeTrial.isActive = false;
+    this.subscription.freeTrial.used = true;
+  }
+
   next();
 });
 
@@ -295,6 +392,65 @@ userSchema.methods.generateRefreshToken = function () {
 // Instance method to check if account is locked
 userSchema.methods.isLocked = function () {
   return !!(this.lockUntil && this.lockUntil > Date.now());
+};
+
+// Instance method to check subscription status
+userSchema.methods.isSubscriptionActive = function () {
+  // Check if user is in free trial
+  if (this.isInFreeTrial) return true;
+
+  if (this.subscription.plan === 'free') return true;
+  if (!this.subscription.endDate) return false;
+  return new Date() <= this.subscription.endDate && this.subscription.status === 'active';
+};
+
+// Instance method to check if user can create projects
+userSchema.methods.canCreateProjects = function () {
+  // Allow project creation during free trial
+  if (this.isInFreeTrial) return true;
+
+  return this.isSubscriptionActive() && this.subscription.plan !== 'free';
+};
+
+// Instance method to check if user can add partners
+userSchema.methods.canAddPartners = function () {
+  // Allow partner features during free trial
+  if (this.isInFreeTrial) return true;
+
+  return this.isSubscriptionActive() && ['personal_plus', 'contractor_pro', 'company_plan'].includes(this.subscription.plan);
+};
+
+// Instance method to check if user can use advanced features
+userSchema.methods.canUseAdvancedFeatures = function () {
+  // Allow advanced features during free trial
+  if (this.isInFreeTrial) return true;
+
+  return this.isSubscriptionActive() && ['contractor_pro', 'company_plan'].includes(this.subscription.plan);
+};
+
+// Instance method to get subscription info
+userSchema.methods.getSubscriptionInfo = function () {
+  const isActive = this.isSubscriptionActive();
+  const isExpired = this.isSubscriptionExpired;
+  const daysUntilExpiry = this.daysUntilExpiry;
+  const isInFreeTrial = this.isInFreeTrial;
+  const daysUntilTrialExpiry = this.daysUntilTrialExpiry;
+
+  return {
+    plan: this.subscription.plan,
+    status: this.subscription.status,
+    isActive,
+    isExpired,
+    daysUntilExpiry,
+    isInFreeTrial,
+    daysUntilTrialExpiry,
+    freeTrialUsed: this.subscription.freeTrial.used,
+    startDate: this.subscription.startDate,
+    endDate: this.subscription.endDate,
+    canCreateProjects: this.canCreateProjects(),
+    canAddPartners: this.canAddPartners(),
+    canUseAdvancedFeatures: this.canUseAdvancedFeatures()
+  };
 };
 
 // Instance method to increment login attempts
@@ -337,6 +493,57 @@ userSchema.statics.findActive = function () {
 // Static method to find by account type
 userSchema.statics.findByAccountType = function (accountType) {
   return this.find({ accountType, isActive: true });
+};
+
+// Static method to find users with expired subscriptions
+userSchema.statics.findExpiredSubscriptions = function () {
+  return this.find({
+    'subscription.plan': { $ne: 'free' },
+    'subscription.endDate': { $lt: new Date() },
+    'subscription.status': { $ne: 'expired' }
+  });
+};
+
+// Static method to find users with subscriptions expiring soon (within X days)
+userSchema.statics.findSubscriptionsExpiringSoon = function (days = 7) {
+  const futureDate = new Date();
+  futureDate.setDate(futureDate.getDate() + days);
+
+  return this.find({
+    'subscription.plan': { $ne: 'free' },
+    'subscription.endDate': {
+      $gte: new Date(),
+      $lte: futureDate
+    },
+    'subscription.status': 'active'
+  });
+};
+
+// Static method to bulk update expired subscriptions
+userSchema.statics.updateExpiredSubscriptions = async function () {
+  try {
+    const result = await this.updateMany(
+      {
+        'subscription.plan': { $ne: 'free' },
+        'subscription.endDate': { $lt: new Date() },
+        'subscription.status': { $ne: 'expired' }
+      },
+      {
+        $set: {
+          'subscription.plan': 'free',
+          'subscription.status': 'expired',
+          'subscription.endDate': null,
+          'subscription.autoRenew': false
+        }
+      }
+    );
+
+    console.log(`🔄 Updated ${result.modifiedCount} expired subscriptions to free plan`);
+    return result;
+  } catch (error) {
+    console.error('Error updating expired subscriptions:', error);
+    throw error;
+  }
 };
 
 module.exports = mongoose.model('User', userSchema);

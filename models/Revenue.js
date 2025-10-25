@@ -253,7 +253,7 @@ revenueSchema.index({ user: 1, type: 1 });
 revenueSchema.index({ project: 1 });
 revenueSchema.index({ company: 1 });
 revenueSchema.index({ 'client.name': 1 });
-revenueSchema.index({ 'invoice.number': 1 });
+// Note: invoice.number index is automatically created due to unique: true in schema
 revenueSchema.index({ paymentStatus: 1 });
 revenueSchema.index({ date: -1 });
 revenueSchema.index({ amount: -1 });

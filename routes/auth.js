@@ -430,6 +430,13 @@ router.post('/login', [
 
     // Update last login
     user.lastLogin = new Date();
+
+    // Check if this is first login after verification
+    const isFirstLoginAfterVerification = user.firstLoginAfterVerification;
+    if (isFirstLoginAfterVerification) {
+      user.firstLoginAfterVerification = false;
+    }
+
     await user.save();
 
     // Generate token
@@ -452,7 +459,8 @@ router.post('/login', [
           preferences: user.preferences,
           lastLogin: user.lastLogin
         },
-        token
+        token,
+        isFirstLoginAfterVerification
       }
     });
 

@@ -61,7 +61,7 @@ const categorySchema = new mongoose.Schema({
 });
 
 // Index for better performance
-categorySchema.index({ name: 1 });
+// Note: name index is automatically created due to unique: true in schema
 categorySchema.index({ type: 1 });
 categorySchema.index({ createdBy: 1 });
 categorySchema.index({ isActive: 1 });
