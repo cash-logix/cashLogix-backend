@@ -9,6 +9,15 @@ const { sendSimpleEmail } = require('../services/simpleEmailService');
 
 const router = express.Router();
 
+// ==========================================
+// EMAIL VERIFICATION CONFIGURATION
+// ==========================================
+// Set this to TRUE to auto-verify all new users (bypass email sending)
+// Set this to FALSE to require email verification (sends verification emails)
+// ==========================================
+const AUTO_VERIFY_EMAILS = true;
+// ==========================================
+
 // Test Gmail SMTP connection
 router.get('/test-email', async (req, res) => {
   try {
@@ -241,8 +250,8 @@ router.post('/register', [
       });
     }
 
-    // Generate email verification token
-    const emailVerificationToken = crypto.randomBytes(32).toString('hex');
+    // Generate email verification token (only if not auto-verifying)
+    const emailVerificationToken = AUTO_VERIFY_EMAILS ? null : crypto.randomBytes(32).toString('hex');
 
     // Set role based on account type
     let role = 'individual_user';
@@ -252,7 +261,7 @@ router.post('/register', [
       role = 'company_owner'; // Company accounts start as company owners
     }
 
-    // Create user
+    // Create user with email verification status
     const user = await User.create({
       firstName,
       lastName,
@@ -262,30 +271,37 @@ router.post('/register', [
       role,
       phone,
       emailVerificationToken,
-      emailVerificationExpires: Date.now() + 24 * 60 * 60 * 1000 // 24 hours
+      emailVerificationExpires: AUTO_VERIFY_EMAILS ? undefined : Date.now() + 24 * 60 * 60 * 1000, // 24 hours
+      isEmailVerified: AUTO_VERIFY_EMAILS // Auto-verify if enabled
     });
 
-    // Send verification email asynchronously and handle auto-verification on failure
-    sendVerificationEmail(user, emailVerificationToken).catch(async (emailError) => {
-      console.error('Email sending failed (async):', emailError);
+    // Send verification email only if auto-verify is disabled
+    if (!AUTO_VERIFY_EMAILS) {
+      sendVerificationEmail(user, emailVerificationToken).catch(async (emailError) => {
+        console.error('Email sending failed (async):', emailError);
 
-      // If email sending fails, auto-verify the user
-      try {
-        user.isEmailVerified = true;
-        await user.save();
-        console.log(`User ${user.email} auto-verified due to email sending failure`);
-      } catch (updateError) {
-        console.error('Failed to auto-verify user:', updateError);
-      }
-    });
+        // If email sending fails, auto-verify the user as fallback
+        try {
+          user.isEmailVerified = true;
+          await user.save();
+          console.log(`User ${user.email} auto-verified due to email sending failure`);
+        } catch (updateError) {
+          console.error('Failed to auto-verify user:', updateError);
+        }
+      });
+    }
 
-    // Generate token (but user still needs to verify email)
+    // Generate token
     const token = user.generateAuthToken();
 
     res.status(201).json({
       success: true,
-      message: 'User registered successfully. Please check your email to verify your account.',
-      arabic: 'تم تسجيل المستخدم بنجاح. يرجى التحقق من بريدك الإلكتروني للتحقق من حسابك.',
+      message: AUTO_VERIFY_EMAILS
+        ? 'User registered successfully. Your email is already verified.'
+        : 'User registered successfully. Please check your email to verify your account.',
+      arabic: AUTO_VERIFY_EMAILS
+        ? 'تم تسجيل المستخدم بنجاح. تم التحقق من بريدك الإلكتروني تلقائياً.'
+        : 'تم تسجيل المستخدم بنجاح. يرجى التحقق من بريدك الإلكتروني للتحقق من حسابك.',
       data: {
         user: {
           id: user._id,
@@ -299,7 +315,7 @@ router.post('/register', [
           preferences: user.preferences
         },
         token,
-        requiresEmailVerification: true
+        requiresEmailVerification: !AUTO_VERIFY_EMAILS
       }
     });
 
