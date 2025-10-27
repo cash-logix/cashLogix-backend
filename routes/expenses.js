@@ -406,6 +406,9 @@ router.post('/', protect, checkEditPermission, [
     } = req.body;
 
     // Validate project/company association based on type
+    // Convert empty strings to undefined for optional fields
+    const cleanedDescription = description && description.trim() ? description.trim() : undefined;
+
     if (type === 'project' && !project) {
       return res.status(400).json({
         success: false,
@@ -434,7 +437,7 @@ router.post('/', protect, checkEditPermission, [
       amount,
       category,
       subcategory,
-      description,
+      description: cleanedDescription,
       type,
       paymentMethod: paymentMethod || 'cash',
       project: type === 'project' ? project : undefined,
@@ -527,7 +530,7 @@ router.put('/:id', protect, checkEditPermission, [
   body('description')
     .optional()
     .trim()
-    .isLength({ min: 1, max: 500 })
+    .isLength({ max: 500 })
     .withMessage('Description must be less than 500 characters')
 ], async (req, res) => {
   try {
@@ -587,6 +590,11 @@ router.put('/:id', protect, checkEditPermission, [
     const oldAmount = expense.amount;
     const oldProject = expense.project;
 
+    // Clean description: convert empty strings to undefined
+    const cleanedDescription = description !== undefined
+      ? (description.trim() ? description.trim() : undefined)
+      : undefined;
+
     // Update expense
     const updatedExpense = await Expense.findByIdAndUpdate(
       req.params.id,
@@ -594,7 +602,7 @@ router.put('/:id', protect, checkEditPermission, [
         ...(amount && { amount }),
         ...(category && { category }),
         ...(subcategory && { subcategory }),
-        ...(description && { description }),
+        ...(cleanedDescription !== undefined && { description: cleanedDescription }),
         ...(paymentMethod && { paymentMethod }),
         ...(date && { date: new Date(date) }),
         ...(tags && { tags }),

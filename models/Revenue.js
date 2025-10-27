@@ -32,7 +32,6 @@ const revenueSchema = new mongoose.Schema({
   },
   description: {
     type: String,
-    required: [true, 'Description is required'],
     trim: true,
     maxlength: [500, 'Description cannot exceed 500 characters']
   },
@@ -150,7 +149,7 @@ const revenueSchema = new mongoose.Schema({
       'paypal',
       'other'
     ],
-    default: 'bank_transfer'
+    default: 'cash'
   },
   paymentStatus: {
     type: String,

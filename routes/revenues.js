@@ -94,9 +94,10 @@ router.post('/', protect, checkEditPermission, [
     .isLength({ min: 1, max: 100 })
     .withMessage('Category is required and must be less than 100 characters'),
   body('description')
+    .optional()
     .trim()
-    .isLength({ min: 1, max: 500 })
-    .withMessage('Description is required and must be less than 500 characters'),
+    .isLength({ max: 500 })
+    .withMessage('Description must be less than 500 characters'),
   body('type')
     .isIn(['personal', 'business', 'project'])
     .withMessage('Type must be personal, business, or project')
@@ -135,6 +136,8 @@ router.post('/', protect, checkEditPermission, [
     } = req.body;
 
     // Validate project/company association based on type
+    // Convert empty strings to undefined for optional fields
+    const cleanedDescription = description && description.trim() ? description.trim() : undefined;
     if (type === 'project' && !project) {
       return res.status(400).json({
         success: false,
@@ -163,14 +166,14 @@ router.post('/', protect, checkEditPermission, [
       amount,
       category,
       subcategory,
-      description,
+      description: cleanedDescription,
       type,
       source: source || 'other',
       client,
       invoice,
       project: type === 'project' ? project : undefined,
       company: type === 'business' ? company : undefined,
-      paymentMethod: paymentMethod || 'bank_transfer',
+      paymentMethod: paymentMethod || 'cash',
       paymentStatus: paymentStatus || 'received',
       date: date ? new Date(date) : new Date(),
       tags,
@@ -320,7 +323,7 @@ router.put('/:id', protect, checkEditPermission, [
   body('description')
     .optional()
     .trim()
-    .isLength({ min: 1, max: 500 })
+    .isLength({ max: 500 })
     .withMessage('Description must be less than 500 characters'),
   body('paymentStatus')
     .optional()
@@ -386,6 +389,11 @@ router.put('/:id', protect, checkEditPermission, [
     const oldAmount = revenue.amount;
     const oldProject = revenue.project;
 
+    // Clean description: convert empty strings to undefined
+    const cleanedDescription = description !== undefined
+      ? (description.trim() ? description.trim() : undefined)
+      : undefined;
+
     // Update revenue
     const updatedRevenue = await Revenue.findByIdAndUpdate(
       req.params.id,
@@ -393,7 +401,7 @@ router.put('/:id', protect, checkEditPermission, [
         ...(amount && { amount }),
         ...(category && { category }),
         ...(subcategory && { subcategory }),
-        ...(description && { description }),
+        ...(cleanedDescription !== undefined && { description: cleanedDescription }),
         ...(source && { source }),
         ...(client && { client }),
         ...(invoice && { invoice }),
