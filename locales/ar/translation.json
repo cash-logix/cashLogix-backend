@@ -1,0 +1,40 @@
+{
+  "auth": {
+    "registered_successfully": "تم التسجيل بنجاح. يرجى التحقق من بريدك الإلكتروني لتفعيل حسابك.",
+    "login_successful": "تم تسجيل الدخول بنجاح",
+    "email_verified": "تم التحقق من البريد الإلكتروني بنجاح. يمكنك الآن تسجيل الدخول.",
+    "invalid_credentials": "البريد الإلكتروني أو كلمة المرور غير صحيحة",
+    "email_not_verified": "يرجى التحقق من بريدك الإلكتروني أولاً",
+    "user_not_found": "المستخدم غير موجود",
+    "invalid_token": "رمز غير صالح أو منتهي الصلاحية",
+    "password_reset_sent": "تم إرسال رابط إعادة تعيين كلمة المرور إلى بريدك الإلكتروني",
+    "password_reset_success": "تم إعادة تعيين كلمة المرور بنجاح",
+    "activation_link_sent": "تم إرسال رابط التفعيل إلى بريدك الإلكتروني",
+    "email_already_exists": "البريد الإلكتروني موجود بالفعل",
+    "phone_already_exists": "رقم الهاتف موجود بالفعل"
+  },
+  "receipt": {
+    "created_successfully": "تم إنشاء الإيصال بنجاح",
+    "not_found": "الإيصال بهذا الرقم غير موجود",
+    "already_claimed": "لقد حصلت بالفعل على نقاط لهذا الإيصال",
+    "points_added": "تم إضافة النقاط بنجاح",
+    "invalid_establishment": "المنشأة غير صالحة"
+  },
+  "establishment": {
+    "not_found": "المنشأة غير موجودة",
+    "unauthorized": "غير مصرح بالوصول"
+  },
+  "user": {
+    "not_found": "المستخدم غير موجود"
+  },
+  "points": {
+    "deducted_successfully": "تم خصم النقاط بنجاح",
+    "insufficient_points": "نقاط غير كافية"
+  },
+  "validation": {
+    "required_field": "{{field}} مطلوب",
+    "invalid_email": "صيغة البريد الإلكتروني غير صحيحة",
+    "invalid_phone": "رقم الهاتف غير صحيح",
+    "password_min_length": "يجب أن تكون كلمة المرور 6 أحرف على الأقل"
+  }
+}
