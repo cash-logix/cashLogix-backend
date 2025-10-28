@@ -63,7 +63,7 @@ const userSchema = new mongoose.Schema({
   subscription: {
     plan: {
       type: String,
-      enum: ['free', 'personal_plus', 'contractor_pro', 'company_plan'],
+      enum: ['free', 'personal_plus', 'pro', 'company_plan'],
       default: 'free'
     },
     status: {
@@ -96,6 +96,34 @@ const userSchema = new mongoose.Schema({
         type: Boolean,
         default: false
       }
+    }
+  },
+
+  // Usage Tracking for Subscription Limits
+  usageTracking: {
+    // Daily counters
+    daily: {
+      voiceInputs: {
+        count: { type: Number, default: 0 },
+        lastReset: { type: Date, default: Date.now }
+      },
+      expenses: {
+        count: { type: Number, default: 0 },
+        lastReset: { type: Date, default: Date.now }
+      }
+    },
+    // Monthly counters
+    monthly: {
+      revenues: {
+        count: { type: Number, default: 0 },
+        lastReset: { type: Date, default: Date.now }
+      }
+    },
+    // Total counters (no reset)
+    total: {
+      supervisors: { type: Number, default: 0 },
+      projects: { type: Number, default: 0 },
+      partners: { type: Number, default: 0 }
     }
   },
 
@@ -342,9 +370,9 @@ userSchema.pre('save', function (next) {
     this.subscription.freeTrial.isActive = true;
     this.subscription.freeTrial.startDate = new Date();
 
-    // Set trial end date to 1 month from now
+    // Set trial end date to 14 days from now
     const trialEndDate = new Date();
-    trialEndDate.setMonth(trialEndDate.getMonth() + 1);
+    trialEndDate.setDate(trialEndDate.getDate() + 14);
     this.subscription.freeTrial.endDate = trialEndDate;
   }
 
@@ -414,18 +442,190 @@ userSchema.methods.canCreateProjects = function () {
 
 // Instance method to check if user can add partners
 userSchema.methods.canAddPartners = function () {
-  // Allow partner features during free trial
-  if (this.isInFreeTrial) return true;
-
-  return this.isSubscriptionActive() && ['personal_plus', 'contractor_pro', 'company_plan'].includes(this.subscription.plan);
+  // Only Pro and Company plans can add partners
+  return this.isSubscriptionActive() && ['pro', 'company_plan'].includes(this.subscription.plan);
 };
 
 // Instance method to check if user can use advanced features
 userSchema.methods.canUseAdvancedFeatures = function () {
-  // Allow advanced features during free trial
-  if (this.isInFreeTrial) return true;
+  return this.isSubscriptionActive() && ['pro', 'company_plan'].includes(this.subscription.plan);
+};
 
-  return this.isSubscriptionActive() && ['contractor_pro', 'company_plan'].includes(this.subscription.plan);
+// Get subscription limits based on plan
+userSchema.methods.getSubscriptionLimits = function () {
+  // Check if user is in an active free trial
+  const isInActiveFreeTrial = this.subscription.freeTrial?.isActive &&
+    this.subscription.freeTrial?.endDate &&
+    new Date() < new Date(this.subscription.freeTrial.endDate);
+
+  // If in active free trial, return unlimited limits (same as pro plan)
+  if (isInActiveFreeTrial) {
+    return {
+      voiceInputsPerDay: Infinity,
+      expensesPerDay: Infinity,
+      revenuesPerMonth: Infinity,
+      supervisors: Infinity,
+      projects: Infinity,
+      partners: Infinity
+    };
+  }
+  const limits = {
+    free: {
+      voiceInputsPerDay: 3,
+      expensesPerDay: 5,
+      revenuesPerMonth: 3,
+      supervisors: 0,
+      projects: 0,
+      partners: 0
+    },
+    personal_plus: {
+      voiceInputsPerDay: 20,
+      expensesPerDay: 50,
+      revenuesPerMonth: 20,
+      supervisors: 3,
+      projects: 0,
+      partners: 0
+    },
+    pro: {
+      voiceInputsPerDay: Infinity,
+      expensesPerDay: Infinity,
+      revenuesPerMonth: Infinity,
+      supervisors: Infinity,
+      projects: Infinity,
+      partners: Infinity
+    },
+    company_plan: {
+      voiceInputsPerDay: Infinity,
+      expensesPerDay: Infinity,
+      revenuesPerMonth: Infinity,
+      supervisors: Infinity,
+      projects: Infinity,
+      partners: Infinity
+    }
+  };
+
+  return limits[this.subscription.plan] || limits.free;
+};
+
+// Check if user can perform an action based on usage limits
+userSchema.methods.canPerformAction = function (actionType) {
+  const limits = this.getSubscriptionLimits();
+  const usage = this.usageTracking;
+
+  switch (actionType) {
+    case 'voiceInput':
+      return usage.daily.voiceInputs.count < limits.voiceInputsPerDay;
+    case 'expense':
+      return usage.daily.expenses.count < limits.expensesPerDay;
+    case 'revenue':
+      return usage.monthly.revenues.count < limits.revenuesPerMonth;
+    case 'supervisor':
+      return usage.total.supervisors < limits.supervisors;
+    case 'project':
+      return limits.projects === Infinity || usage.total.projects < limits.projects;
+    case 'partner':
+      return limits.partners === Infinity || usage.total.partners < limits.partners;
+    default:
+      return false;
+  }
+};
+
+// Get remaining usage for a specific action
+userSchema.methods.getRemainingUsage = function (actionType) {
+  const limits = this.getSubscriptionLimits();
+  const usage = this.usageTracking;
+
+  switch (actionType) {
+    case 'voiceInput':
+      return {
+        used: usage.daily.voiceInputs.count,
+        limit: limits.voiceInputsPerDay,
+        remaining: limits.voiceInputsPerDay === Infinity ? Infinity : limits.voiceInputsPerDay - usage.daily.voiceInputs.count
+      };
+    case 'expense':
+      return {
+        used: usage.daily.expenses.count,
+        limit: limits.expensesPerDay,
+        remaining: limits.expensesPerDay === Infinity ? Infinity : limits.expensesPerDay - usage.daily.expenses.count
+      };
+    case 'revenue':
+      return {
+        used: usage.monthly.revenues.count,
+        limit: limits.revenuesPerMonth,
+        remaining: limits.revenuesPerMonth === Infinity ? Infinity : limits.revenuesPerMonth - usage.monthly.revenues.count
+      };
+    case 'supervisor':
+      return {
+        used: usage.total.supervisors,
+        limit: limits.supervisors,
+        remaining: limits.supervisors === Infinity ? Infinity : limits.supervisors - usage.total.supervisors
+      };
+    case 'project':
+      return {
+        used: usage.total.projects,
+        limit: limits.projects,
+        remaining: limits.projects === Infinity ? Infinity : limits.projects - usage.total.projects
+      };
+    case 'partner':
+      return {
+        used: usage.total.partners,
+        limit: limits.partners,
+        remaining: limits.partners === Infinity ? Infinity : limits.partners - usage.total.partners
+      };
+    default:
+      return { used: 0, limit: 0, remaining: 0 };
+  }
+};
+
+// Increment usage counter for a specific action
+userSchema.methods.incrementUsage = async function (actionType) {
+  const updates = {};
+
+  switch (actionType) {
+    case 'voiceInput':
+      updates['usageTracking.daily.voiceInputs.count'] = (this.usageTracking.daily.voiceInputs.count || 0) + 1;
+      break;
+    case 'expense':
+      updates['usageTracking.daily.expenses.count'] = (this.usageTracking.daily.expenses.count || 0) + 1;
+      break;
+    case 'revenue':
+      updates['usageTracking.monthly.revenues.count'] = (this.usageTracking.monthly.revenues.count || 0) + 1;
+      break;
+    case 'supervisor':
+      updates['usageTracking.total.supervisors'] = (this.usageTracking.total.supervisors || 0) + 1;
+      break;
+    case 'project':
+      updates['usageTracking.total.projects'] = (this.usageTracking.total.projects || 0) + 1;
+      break;
+    case 'partner':
+      updates['usageTracking.total.partners'] = (this.usageTracking.total.partners || 0) + 1;
+      break;
+  }
+
+  if (Object.keys(updates).length > 0) {
+    await this.updateOne({ $set: updates });
+  }
+};
+
+// Decrement usage counter for a specific action (when deleting)
+userSchema.methods.decrementUsage = async function (actionType) {
+  const updates = {};
+
+  switch (actionType) {
+    case 'supervisor':
+      updates['usageTracking.total.supervisors'] = Math.max(0, (this.usageTracking.total.supervisors || 0) - 1);
+      break;
+    case 'project':
+      updates['usageTracking.total.projects'] = Math.max(0, (this.usageTracking.total.projects || 0) - 1);
+      break;
+    case 'partner':
+      updates['usageTracking.total.partners'] = Math.max(0, (this.usageTracking.total.partners || 0) - 1);
+      break;
+  }
+
+  if (Object.keys(updates).length > 0) {
+    await this.updateOne({ $set: updates });
+  }
 };
 
 // Instance method to get subscription info
@@ -542,6 +742,63 @@ userSchema.statics.updateExpiredSubscriptions = async function () {
     return result;
   } catch (error) {
     console.error('Error updating expired subscriptions:', error);
+    throw error;
+  }
+};
+
+// Static method to reset daily counters (voice inputs and expenses)
+userSchema.statics.resetDailyCounters = async function () {
+  try {
+    const oneDayAgo = new Date();
+    oneDayAgo.setDate(oneDayAgo.getDate() - 1);
+
+    const result = await this.updateMany(
+      {
+        $or: [
+          { 'usageTracking.daily.voiceInputs.lastReset': { $lt: oneDayAgo } },
+          { 'usageTracking.daily.expenses.lastReset': { $lt: oneDayAgo } }
+        ]
+      },
+      {
+        $set: {
+          'usageTracking.daily.voiceInputs.count': 0,
+          'usageTracking.daily.voiceInputs.lastReset': new Date(),
+          'usageTracking.daily.expenses.count': 0,
+          'usageTracking.daily.expenses.lastReset': new Date()
+        }
+      }
+    );
+
+    console.log(`🔄 Reset daily counters for ${result.modifiedCount} users`);
+    return result;
+  } catch (error) {
+    console.error('Error resetting daily counters:', error);
+    throw error;
+  }
+};
+
+// Static method to reset monthly counters (revenues)
+userSchema.statics.resetMonthlyCounters = async function () {
+  try {
+    const oneMonthAgo = new Date();
+    oneMonthAgo.setMonth(oneMonthAgo.getMonth() - 1);
+
+    const result = await this.updateMany(
+      {
+        'usageTracking.monthly.revenues.lastReset': { $lt: oneMonthAgo }
+      },
+      {
+        $set: {
+          'usageTracking.monthly.revenues.count': 0,
+          'usageTracking.monthly.revenues.lastReset': new Date()
+        }
+      }
+    );
+
+    console.log(`🔄 Reset monthly counters for ${result.modifiedCount} users`);
+    return result;
+  } catch (error) {
+    console.error('Error resetting monthly counters:', error);
     throw error;
   }
 };

@@ -8,6 +8,7 @@ const {
   checkViewPermission,
   checkDeletePermission
 } = require('../middleware/auth');
+const { checkSubscriptionLimit } = require('../middleware/subscription');
 
 const router = express.Router();
 
@@ -85,7 +86,7 @@ router.get('/', protect, checkViewPermission, async (req, res) => {
 // @desc    Create new revenue
 // @route   POST /api/revenues
 // @access  Private
-router.post('/', protect, checkEditPermission, [
+router.post('/', protect, checkSubscriptionLimit('revenue'), checkEditPermission, [
   body('amount')
     .isFloat({ min: 0.01 })
     .withMessage('Amount must be greater than 0'),
@@ -132,7 +133,8 @@ router.post('/', protect, checkEditPermission, [
       paymentStatus,
       date,
       tags,
-      notes
+      notes,
+      aiProcessing
     } = req.body;
 
     // Validate project/company association based on type
@@ -177,8 +179,21 @@ router.post('/', protect, checkEditPermission, [
       paymentStatus: paymentStatus || 'received',
       date: date ? new Date(date) : new Date(),
       tags,
-      notes
+      notes,
+      aiProcessing: aiProcessing || {
+        isVoiceInput: false,
+        processedAt: new Date()
+      }
     });
+
+    // Increment voice input counter if this was created via voice
+    if (aiProcessing && aiProcessing.isVoiceInput) {
+      const User = require('../models/User');
+      const user = await User.findById(req.user.id);
+      if (user) {
+        await user.incrementUsage('voiceInput');
+      }
+    }
 
     // Update project budget if this is a project revenue
     if (type === 'project' && project) {

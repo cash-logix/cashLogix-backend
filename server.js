@@ -17,6 +17,7 @@ const approvalRoutes = require('./routes/approvals');
 const companyRoutes = require('./routes/companies');
 const categoryRoutes = require('./routes/categories');
 const adminRoutes = require('./routes/admin');
+const subscriptionRoutes = require('./routes/subscription');
 
 // Import middleware
 const errorHandler = require('./middleware/errorHandler');
@@ -84,6 +85,7 @@ app.use('/api/approvals', approvalRoutes);
 app.use('/api/companies', companyRoutes);
 app.use('/api/categories', categoryRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/subscription', subscriptionRoutes);
 
 // 404 handler
 app.use(notFound);

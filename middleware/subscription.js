@@ -1,185 +1,117 @@
-// Subscription middleware for checking user subscription plans
+const SubscriptionService = require('../services/subscriptionService');
 
 /**
- * Check if user has a paid subscription plan
- * @param {Object} req - Express request object
- * @param {Object} res - Express response object
- * @param {Function} next - Express next function
+ * Subscription Middleware
+ * Checks subscription limits before allowing actions
  */
-const requirePaidPlan = (req, res, next) => {
-  if (req.user.subscription.plan === 'free') {
-    return res.status(403).json({
-      success: false,
-      error: {
-        message: 'This feature requires a paid subscription plan',
-        arabic: 'هذه الميزة تتطلب خطة اشتراك مدفوعة',
-        statusCode: 403,
-        upgradeRequired: true
-      }
-    });
-  }
-  next();
-};
 
 /**
- * Check if user has contractor or company plan
- * @param {Object} req - Express request object
- * @param {Object} res - Express response object
- * @param {Function} next - Express next function
+ * Check subscription limit for a specific action
+ * @param {String} actionType - Type of action to check
  */
-const requireContractorPlan = (req, res, next) => {
-  if (!['contractor_pro', 'company_plan'].includes(req.user.subscription.plan)) {
-    return res.status(403).json({
-      success: false,
-      error: {
-        message: 'This feature requires contractor or company subscription plan',
-        arabic: 'هذه الميزة تتطلب خطة اشتراك مقاول أو شركة',
-        statusCode: 403,
-        upgradeRequired: true
-      }
-    });
-  }
-  next();
-};
-
-/**
- * Check if user has company plan
- * @param {Object} req - Express request object
- * @param {Object} res - Express response object
- * @param {Function} next - Express next function
- */
-const requireCompanyPlan = (req, res, next) => {
-  if (req.user.subscription.plan !== 'company_plan') {
-    return res.status(403).json({
-      success: false,
-      error: {
-        message: 'This feature requires company subscription plan',
-        arabic: 'هذه الميزة تتطلب خطة اشتراك شركة',
-        statusCode: 403,
-        upgradeRequired: true
-      }
-    });
-  }
-  next();
-};
-
-/**
- * Get subscription plan limits
- * @param {String} plan - Subscription plan name
- * @returns {Object} Plan limits
- */
-const getPlanLimits = (plan) => {
-  const limits = {
-    free: {
-      maxProjects: 0,
-      maxExpenses: 50,
-      maxRevenues: 50,
-      maxPartners: 0,
-      features: ['basic_expense_tracking', 'basic_revenue_tracking']
-    },
-    personal_plus: {
-      maxProjects: 3,
-      maxExpenses: 200,
-      maxRevenues: 200,
-      maxPartners: 2,
-      features: ['project_management', 'basic_reports', 'partner_collaboration']
-    },
-    contractor_pro: {
-      maxProjects: 10,
-      maxExpenses: 1000,
-      maxRevenues: 1000,
-      maxPartners: 5,
-      features: ['advanced_project_management', 'advanced_reports', 'team_collaboration', 'client_management']
-    },
-    company_plan: {
-      maxProjects: -1, // unlimited
-      maxExpenses: -1, // unlimited
-      maxRevenues: -1, // unlimited
-      maxPartners: -1, // unlimited
-      features: ['unlimited_projects', 'unlimited_transactions', 'advanced_analytics', 'multi_company_support', 'api_access']
-    }
-  };
-
-  return limits[plan] || limits.free;
-};
-
-/**
- * Check if user has reached plan limits
- * @param {Object} req - Express request object
- * @param {Object} res - Express response object
- * @param {Function} next - Express next function
- */
-const checkPlanLimits = (resourceType) => {
+const checkSubscriptionLimit = (actionType) => {
   return async (req, res, next) => {
     try {
-      const plan = req.user.subscription.plan;
-      const limits = getPlanLimits(plan);
+      const userId = req.user.id;
 
-      // Skip limit check for unlimited plans
-      if (limits[resourceType] === -1) {
-        return next();
-      }
+      // Check if user can perform the action and increment counter
+      const result = await SubscriptionService.checkAndIncrementLimit(userId, actionType);
 
-      // Check current usage based on resource type
-      let currentCount = 0;
-
-      switch (resourceType) {
-        case 'maxProjects':
-          const Project = require('../models/Project');
-          currentCount = await Project.countDocuments({
-            owner: req.user.id,
-            isActive: true
-          });
-          break;
-
-        case 'maxExpenses':
-          const Expense = require('../models/Expense');
-          currentCount = await Expense.countDocuments({
-            user: req.user.id,
-            status: 'active'
-          });
-          break;
-
-        case 'maxRevenues':
-          const Revenue = require('../models/Revenue');
-          currentCount = await Revenue.countDocuments({
-            user: req.user.id,
-            status: 'active'
-          });
-          break;
-
-        case 'maxPartners':
-          // This would need to be implemented based on your partner system
-          currentCount = 0; // Placeholder
-          break;
-      }
-
-      if (currentCount >= limits[resourceType]) {
+      if (!result.allowed) {
         return res.status(403).json({
           success: false,
           error: {
-            message: `You have reached the limit for ${resourceType.replace('max', '').toLowerCase()}`,
-            arabic: `لقد وصلت إلى الحد المسموح لـ ${resourceType.replace('max', '').toLowerCase()}`,
-            statusCode: 403,
-            upgradeRequired: true,
-            currentUsage: currentCount,
-            limit: limits[resourceType]
+            message: 'Subscription limit reached',
+            arabic: result.message,
+            code: 'SUBSCRIPTION_LIMIT_REACHED',
+            currentPlan: result.currentPlan,
+            usage: result.usage
           }
         });
       }
 
+      // Attach usage info to request for logging/analytics
+      req.subscriptionUsage = result.usage;
+      req.subscriptionPlan = result.currentPlan;
+
       next();
     } catch (error) {
-      console.error('Plan limits check error:', error);
-      next(error);
+      console.error('Subscription middleware error:', error);
+      return res.status(500).json({
+        success: false,
+        error: {
+          message: 'Error checking subscription limits',
+          arabic: 'حدث خطأ في التحقق من حدود الاشتراك',
+          details: error.message
+        }
+      });
     }
   };
 };
 
+/**
+ * Check subscription limit without incrementing (for read operations)
+ * @param {String} actionType - Type of action to check
+ */
+const checkSubscriptionLimitNoIncrement = (actionType) => {
+  return async (req, res, next) => {
+    try {
+      const userId = req.user.id;
+
+      // Check if user can perform the action without incrementing
+      const result = await SubscriptionService.checkLimit(userId, actionType);
+
+      if (!result.allowed) {
+        return res.status(403).json({
+          success: false,
+          error: {
+            message: 'Subscription limit reached',
+            arabic: result.message,
+            code: 'SUBSCRIPTION_LIMIT_REACHED',
+            currentPlan: result.currentPlan,
+            usage: result.usage
+          }
+        });
+      }
+
+      // Attach usage info to request
+      req.subscriptionUsage = result.usage;
+      req.subscriptionPlan = result.currentPlan;
+
+      next();
+    } catch (error) {
+      console.error('Subscription middleware error:', error);
+      return res.status(500).json({
+        success: false,
+        error: {
+          message: 'Error checking subscription limits',
+          arabic: 'حدث خطأ في التحقق من حدود الاشتراك',
+          details: error.message
+        }
+      });
+    }
+  };
+};
+
+/**
+ * Middleware to attach subscription usage stats to request
+ */
+const attachSubscriptionStats = async (req, res, next) => {
+  try {
+    const userId = req.user.id;
+    const stats = await SubscriptionService.getUserUsageStats(userId);
+
+    req.subscriptionStats = stats;
+    next();
+  } catch (error) {
+    console.error('Error attaching subscription stats:', error);
+    // Don't block the request, just log the error
+    next();
+  }
+};
+
 module.exports = {
-  requirePaidPlan,
-  requireContractorPlan,
-  requireCompanyPlan,
-  getPlanLimits,
-  checkPlanLimits
+  checkSubscriptionLimit,
+  checkSubscriptionLimitNoIncrement,
+  attachSubscriptionStats
 };

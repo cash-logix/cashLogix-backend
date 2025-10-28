@@ -9,6 +9,7 @@ const {
   checkDeletePermission,
   checkApprovalPermission
 } = require('../middleware/auth');
+const { checkSubscriptionLimit } = require('../middleware/subscription');
 
 const router = express.Router();
 
@@ -100,6 +101,39 @@ router.get('/', protect, checkViewPermission, async (req, res) => {
     });
   }
 });
+
+// @desc    Get expenses for testing (description, category, price only) - NO AUTH REQUIRED
+// @route   GET /api/expenses/test-data
+// @access  Public (Temporary - for testing only)
+// router.get('/test-data', async (req, res) => {
+//   try {
+//     const expenses = await Expense.find({
+//       status: 'active'
+//     }).select('description category amount');
+
+//     // Transform to simple objects
+//     const simpleExpenses = expenses.map(expense => ({
+//       description: expense.description || '',
+//       category: expense.category,
+//       price: expense.amount
+//     }));
+
+//     res.json({
+//       success: true,
+//       data: simpleExpenses
+//     });
+//   } catch (error) {
+//     console.error('Get test expenses error:', error);
+//     res.status(500).json({
+//       success: false,
+//       error: {
+//         message: 'Server error',
+//         arabic: 'خطأ في الخادم',
+//         statusCode: 500
+//       }
+//     });
+//   }
+// });
 
 // @desc    Get expense categories
 // @route   GET /api/expenses/categories
@@ -353,7 +387,7 @@ router.get('/:id', protect, checkViewPermission, async (req, res) => {
 // @desc    Create new expense
 // @route   POST /api/expenses
 // @access  Private
-router.post('/', protect, checkEditPermission, [
+router.post('/', protect, checkSubscriptionLimit('expense'), checkEditPermission, [
   body('amount')
     .isFloat({ min: 0.01 })
     .withMessage('Amount must be greater than 0'),
@@ -451,6 +485,15 @@ router.post('/', protect, checkEditPermission, [
         processedAt: new Date()
       }
     });
+
+    // Increment voice input counter if this was created via voice
+    if (aiProcessing && aiProcessing.isVoiceInput) {
+      const User = require('../models/User');
+      const user = await User.findById(req.user.id);
+      if (user) {
+        await user.incrementUsage('voiceInput');
+      }
+    }
 
     // Update project budget if this is a project expense
     if (type === 'project' && project) {

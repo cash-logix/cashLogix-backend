@@ -8,7 +8,7 @@ const {
   checkEditPermission,
   checkDeletePermission
 } = require('../middleware/auth');
-const { requirePaidPlan, checkPlanLimits } = require('../middleware/subscription');
+const { checkSubscriptionLimit, checkSubscriptionLimitNoIncrement } = require('../middleware/subscription');
 const { default: mongoose } = require('mongoose');
 
 const router = express.Router();
@@ -105,7 +105,7 @@ router.get('/', protect, checkViewPermission, async (req, res) => {
 // @desc    Create new project
 // @route   POST /api/projects
 // @access  Private
-router.post('/', protect, checkProjectPermission, requirePaidPlan, checkPlanLimits('maxProjects'), [
+router.post('/', protect, checkSubscriptionLimit('project'), checkProjectPermission, [
   body('name')
     .trim()
     .isLength({ min: 1, max: 200 })
@@ -209,7 +209,7 @@ router.post('/', protect, checkProjectPermission, requirePaidPlan, checkPlanLimi
 // @desc    Invite partner to project
 // @route   POST /api/projects/:id/partners
 // @access  Private
-router.post('/:id/partners', protect, checkProjectPermission, [
+router.post('/:id/partners', protect, checkSubscriptionLimit('partner'), checkProjectPermission, [
   body('email')
     .isEmail()
     .withMessage('Valid email address is required'),
