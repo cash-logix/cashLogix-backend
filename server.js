@@ -41,13 +41,70 @@ app.use(compression());
 // app.use('/api/', limiter);
 
 // CORS configuration
+const isProduction = process.env.NODE_ENV === 'production';
+
+// Base allowed origins - production domains
+const productionOrigins = [
+  'https://www.cash-logix.com',
+  'https://cash-logix.com',
+  'https://cash-logix.vercel.app'
+];
+
+// Development origins - localhost URLs
+const developmentOrigins = [
+  'http://localhost:5173', // Vite default port
+  'http://localhost:5174', // Vite default port
+  'http://localhost:3000'  // React default port
+];
+
+// Build allowed origins based on environment
+let allowedOrigins = [...productionOrigins];
+
+// Add FRONTEND_URL if set
+if (process.env.FRONTEND_URL) {
+  allowedOrigins.push(process.env.FRONTEND_URL);
+}
+
+// In development, add localhost URLs
+if (!isProduction) {
+  allowedOrigins.push(...developmentOrigins);
+  // If FRONTEND_URL is not set in development, add default localhost
+  if (!process.env.FRONTEND_URL) {
+    allowedOrigins.push('http://localhost:3000');
+  }
+}
+
+// Filter out undefined values (in case FRONTEND_URL is not set)
+const origins = allowedOrigins.filter(origin => origin);
+
 app.use(cors({
-  origin: [
-    process.env.FRONTEND_URL || 'http://localhost:3000',
-    'http://localhost:5173', // Vite default port
-    'http://localhost:5174', // Vite default port
-    'http://localhost:3000'  // React default port
-  ],
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+
+    // In production, reject any localhost origins
+    if (isProduction && origin.includes('localhost')) {
+      console.warn(`🚫 CORS: Rejected localhost origin in production - ${origin}`);
+      return callback(new Error('Localhost origins are not allowed in production'));
+    }
+
+    // Normalize origin by removing trailing slash
+    const normalizedOrigin = origin.replace(/\/$/, '');
+
+    // Check if the origin (with or without trailing slash) is in the allowed list
+    const isAllowed = origins.some(allowedOrigin => {
+      const normalizedAllowed = allowedOrigin.replace(/\/$/, '');
+      return normalizedOrigin === normalizedAllowed;
+    });
+
+    if (isAllowed) {
+      callback(null, true);
+    } else {
+      // Log unauthorized origin attempts for debugging
+      console.warn(`⚠️  CORS: Blocked origin - ${origin}`);
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'Accept-Language']
