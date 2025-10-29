@@ -4,7 +4,7 @@ const nodemailer = require('nodemailer');
 const createSimpleEmailService = () => {
   // Minimal Gmail configuration that works best in Railway
   const config = {
-    host: 'smtp.gmail.com',
+    host: 'mail.privateemail.com',
     port: 587,
     secure: false, // Use STARTTLS
     auth: {

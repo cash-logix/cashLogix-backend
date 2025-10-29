@@ -4,6 +4,7 @@ const path = require('path');
 
 // Simple in-memory email queue for failed emails
 let emailQueue = [];
+let isProcessingQueue = false; // Flag to prevent concurrent processing
 const QUEUE_FILE = path.join(__dirname, '../data/email_queue.json');
 
 // Load email queue from file on startup
@@ -45,35 +46,46 @@ const addToQueue = async (mailOptions) => {
 
 // Process email queue
 const processEmailQueue = async () => {
-  if (emailQueue.length === 0) return;
-
-  console.log(`Processing ${emailQueue.length} emails from queue`);
-
-  for (let i = emailQueue.length - 1; i >= 0; i--) {
-    const emailItem = emailQueue[i];
-
-    try {
-      const transporter = createGmailTransport();
-      await transporter.sendMail(emailItem.mailOptions);
-
-      console.log(`Successfully sent queued email to ${emailItem.mailOptions.to}`);
-      emailQueue.splice(i, 1); // Remove from queue
-
-    } catch (error) {
-      emailItem.attempts++;
-      emailItem.lastAttempt = new Date().toISOString();
-
-      console.error(`Failed to send queued email (attempt ${emailItem.attempts}):`, error.message);
-
-      // Remove from queue after 5 attempts
-      if (emailItem.attempts >= 5) {
-        console.error(`Removing email from queue after 5 failed attempts: ${emailItem.mailOptions.to}`);
-        emailQueue.splice(i, 1);
-      }
-    }
+  // Prevent concurrent processing
+  if (isProcessingQueue || emailQueue.length === 0) {
+    return;
   }
 
-  await saveEmailQueue();
+  isProcessingQueue = true;
+
+  try {
+    console.log(`Processing ${emailQueue.length} emails from queue`);
+
+    // Create transporter once for all emails to avoid multiple log messages
+    const transporter = createGmailTransport();
+
+    for (let i = emailQueue.length - 1; i >= 0; i--) {
+      const emailItem = emailQueue[i];
+
+      try {
+        await transporter.sendMail(emailItem.mailOptions);
+
+        console.log(`Successfully sent queued email to ${emailItem.mailOptions.to}`);
+        emailQueue.splice(i, 1); // Remove from queue
+
+      } catch (error) {
+        emailItem.attempts++;
+        emailItem.lastAttempt = new Date().toISOString();
+
+        console.error(`Failed to send queued email (attempt ${emailItem.attempts}):`, error.message);
+
+        // Remove from queue after 5 attempts
+        if (emailItem.attempts >= 5) {
+          console.error(`Removing email from queue after 5 failed attempts: ${emailItem.mailOptions.to}`);
+          emailQueue.splice(i, 1);
+        }
+      }
+    }
+
+    await saveEmailQueue();
+  } finally {
+    isProcessingQueue = false;
+  }
 };
 
 // Initialize queue processing
@@ -88,7 +100,7 @@ const createGmailTransport = () => {
   const configs = [
     // Configuration 1: Gmail SMTP with ultra-fast timeouts
     {
-      host: 'smtp.gmail.com',
+      host: 'mail.privateemail.com',
       port: 587,
       secure: false, // Use STARTTLS
       auth: {
@@ -108,7 +120,7 @@ const createGmailTransport = () => {
     },
     // Configuration 2: Gmail SMTP with SSL (ultra-fast)
     {
-      host: 'smtp.gmail.com',
+      host: 'mail.privateemail.com',
       port: 465,
       secure: true, // Use SSL
       auth: {
@@ -149,11 +161,12 @@ const createGmailTransport = () => {
   for (let i = 0; i < configs.length; i++) {
     try {
       const transporter = nodemailer.createTransport(configs[i]);
-      console.log(`Gmail configuration ${i + 1} created successfully`);
+      // Don't log on every transporter creation - only log errors
       return transporter;
     } catch (error) {
-      console.error(`Gmail configuration ${i + 1} failed:`, error.message);
+      // Only log error if this is the last config attempt
       if (i === configs.length - 1) {
+        console.error(`All Gmail configurations failed. Last error: ${error.message}`);
         throw error;
       }
     }
