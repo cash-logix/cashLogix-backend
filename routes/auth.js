@@ -15,7 +15,7 @@ const router = express.Router();
 // Set this to TRUE to auto-verify all new users (bypass email sending)
 // Set this to FALSE to require email verification (sends verification emails)
 // ==========================================
-const AUTO_VERIFY_EMAILS = true;
+const AUTO_VERIFY_EMAILS = false;
 // ==========================================
 
 // Test Gmail SMTP connection
