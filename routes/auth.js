@@ -82,7 +82,7 @@ const sendVerificationEmail = async (user, token, retryCount = 0) => {
     const verificationUrl = `${process.env.FRONTEND_URL}/verify-email?token=${token}`;
 
     const mailOptions = {
-      from: process.env.EMAIL_USER,
+      from: `Cash Logix <${process.env.EMAIL_USER}>`,
       to: user.email,
       subject: 'Cash Logix - تأكيد البريد الإلكتروني',
       html: `
@@ -143,7 +143,7 @@ const sendPasswordResetEmail = async (user, token, retryCount = 0) => {
     const resetUrl = `${process.env.FRONTEND_URL}/reset-password?token=${token}`;
 
     const mailOptions = {
-      from: process.env.EMAIL_USER,
+      from: `Cash Logix <${process.env.EMAIL_USER}>`,
       to: user.email,
       subject: 'Cash Logix - إعادة تعيين كلمة المرور',
       html: `
