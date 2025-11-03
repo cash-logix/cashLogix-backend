@@ -288,6 +288,7 @@ userSchema.virtual('accountAge').get(function () {
 // Virtual to check if subscription is expired
 userSchema.virtual('isSubscriptionExpired').get(function () {
   if (this.subscription.plan === 'free') return false;
+  // If no endDate exists, treat as legacy subscription (still valid)
   if (!this.subscription.endDate) return false;
   return new Date() > this.subscription.endDate;
 });
@@ -428,7 +429,12 @@ userSchema.methods.isSubscriptionActive = function () {
   if (this.isInFreeTrial) return true;
 
   if (this.subscription.plan === 'free') return true;
-  if (!this.subscription.endDate) return false;
+
+  // For paid plans: if no endDate exists (legacy users), treat as active if status is active
+  if (!this.subscription.endDate) {
+    return this.subscription.status === 'active';
+  }
+
   return new Date() <= this.subscription.endDate && this.subscription.status === 'active';
 };
 
@@ -451,7 +457,21 @@ userSchema.methods.canUseAdvancedFeatures = function () {
   return this.isSubscriptionActive() && ['pro', 'company_plan'].includes(this.subscription.plan);
 };
 
-// Get subscription limits based on plan
+// Get effective plan (free if expired, otherwise current plan)
+userSchema.methods.getEffectivePlan = function () {
+  // For free plan, always return free
+  if (this.subscription.plan === 'free') return 'free';
+
+  // Check if subscription has expired
+  // If no endDate exists (legacy users), treat as still active
+  if (this.subscription.endDate && this.isSubscriptionExpired) {
+    return 'free';
+  }
+
+  return this.subscription.plan;
+};
+
+// Get subscription limits based on plan (checking expiry)
 userSchema.methods.getSubscriptionLimits = function () {
   // Check if user is in an active free trial
   const isInActiveFreeTrial = this.subscription.freeTrial?.isActive &&
@@ -469,6 +489,10 @@ userSchema.methods.getSubscriptionLimits = function () {
       partners: Infinity
     };
   }
+
+  // Get effective plan (considers expiry)
+  const effectivePlan = this.getEffectivePlan();
+
   const limits = {
     free: {
       voiceInputsPerDay: 3,
@@ -482,7 +506,7 @@ userSchema.methods.getSubscriptionLimits = function () {
       voiceInputsPerDay: 20,
       expensesPerDay: 50,
       revenuesPerMonth: 20,
-      supervisors: 3,
+      supervisors: 1,
       projects: 0,
       partners: 0
     },
@@ -490,7 +514,7 @@ userSchema.methods.getSubscriptionLimits = function () {
       voiceInputsPerDay: Infinity,
       expensesPerDay: Infinity,
       revenuesPerMonth: Infinity,
-      supervisors: Infinity,
+      supervisors: 3,
       projects: Infinity,
       partners: Infinity
     },
@@ -504,7 +528,7 @@ userSchema.methods.getSubscriptionLimits = function () {
     }
   };
 
-  return limits[this.subscription.plan] || limits.free;
+  return limits[effectivePlan] || limits.free;
 };
 
 // Check if user can perform an action based on usage limits

@@ -1,7 +1,8 @@
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
+const Supervisor = require('../models/Supervisor');
 
-// Protect routes - verify JWT token
+// Protect routes - verify JWT token (supports both users and supervisors)
 const protect = async (req, res, next) => {
   let token;
 
@@ -13,6 +14,57 @@ const protect = async (req, res, next) => {
 
       // Verify token
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
+
+      // Check if this is a supervisor token
+      if (decoded.role === 'supervisor' && decoded.supervisorId) {
+        // Get supervisor from token
+        const supervisor = await Supervisor.findById(decoded.supervisorId).select('-password');
+
+        if (!supervisor) {
+          return res.status(401).json({
+            success: false,
+            error: {
+              message: 'Supervisor not found',
+              arabic: 'المشرف غير موجود',
+              statusCode: 401
+            }
+          });
+        }
+
+        // Check if supervisor is active
+        if (!supervisor.isActive) {
+          return res.status(401).json({
+            success: false,
+            error: {
+              message: 'Supervisor account is deactivated',
+              arabic: 'حساب المشرف معطل',
+              statusCode: 401
+            }
+          });
+        }
+
+        // Set supervisor info
+        req.supervisor = supervisor;
+        req.user = await User.findById(supervisor.user).select('-password');
+        req.isSupervisor = true;
+
+        if (!req.user) {
+          return res.status(401).json({
+            success: false,
+            error: {
+              message: 'User not found',
+              arabic: 'المستخدم غير موجود',
+              statusCode: 401
+            }
+          });
+        }
+
+        next();
+        return;
+      }
+
+      // Regular user authentication
+      req.isSupervisor = false;
 
       // Get user from token
       req.user = await User.findById(decoded.id).select('-password');
@@ -52,7 +104,7 @@ const protect = async (req, res, next) => {
         });
       }
 
-      // Check if email is verified
+      // Check if email is verified (only for regular users, not supervisors)
       if (!req.user.isEmailVerified) {
         return res.status(401).json({
           success: false,
@@ -143,10 +195,53 @@ const checkOwnership = (resourceUserField = 'user') => {
   };
 };
 
-// Check if user can edit resource
-const checkEditPermission = (req, res, next) => {
+// Check if user can create resource (supervisors cannot create)
+const checkCreatePermission = (req, res, next) => {
+  // Supervisors cannot create resources
+  if (req.isSupervisor) {
+    return res.status(403).json({
+      success: false,
+      error: {
+        message: 'Supervisors can only view resources, not create them',
+        arabic: 'المشرفون يمكنهم فقط عرض الموارد، وليس إنشاءها',
+        statusCode: 403
+      }
+    });
+  }
+
   // Check user role permissions
-  const canEditRoles = ['individual_user', 'partner_input', 'accountant', 'supervisor', 'company_owner'];
+  const canCreateRoles = ['individual_user', 'partner_input', 'accountant', 'company_owner'];
+
+  if (!canCreateRoles.includes(req.user.role)) {
+    return res.status(403).json({
+      success: false,
+      error: {
+        message: 'Not authorized to create this resource',
+        arabic: 'غير مخول لإنشاء هذا المورد',
+        statusCode: 403
+      }
+    });
+  }
+
+  next();
+};
+
+// Check if user can edit resource (supervisors can only view, not edit)
+const checkEditPermission = (req, res, next) => {
+  // Supervisors cannot edit resources
+  if (req.isSupervisor) {
+    return res.status(403).json({
+      success: false,
+      error: {
+        message: 'Supervisors can only view resources, not edit them',
+        arabic: 'المشرفون يمكنهم فقط عرض الموارد، وليس تعديلها',
+        statusCode: 403
+      }
+    });
+  }
+
+  // Check user role permissions
+  const canEditRoles = ['individual_user', 'partner_input', 'accountant', 'company_owner'];
 
   if (!canEditRoles.includes(req.user.role)) {
     return res.status(403).json({
@@ -162,17 +257,34 @@ const checkEditPermission = (req, res, next) => {
   next();
 };
 
-// Check if user can view resource
+// Check if user can view resource (allows supervisors)
 const checkViewPermission = (req, res, next) => {
+  // Supervisors can view resources for the user they're supervising
+  if (req.isSupervisor) {
+    return next();
+  }
+
   // All authenticated users can view resources
   // Additional checks can be added based on business logic
   next();
 };
 
-// Check if user can delete resource
+// Check if user can delete resource (supervisors cannot delete)
 const checkDeletePermission = (req, res, next) => {
+  // Supervisors cannot delete resources
+  if (req.isSupervisor) {
+    return res.status(403).json({
+      success: false,
+      error: {
+        message: 'Supervisors can only view resources, not delete them',
+        arabic: 'المشرفون يمكنهم فقط عرض الموارد، وليس حذفها',
+        statusCode: 403
+      }
+    });
+  }
+
   // Check user role permissions
-  const canDeleteRoles = ['individual_user', 'accountant', 'supervisor', 'company_owner'];
+  const canDeleteRoles = ['individual_user', 'accountant', 'company_owner'];
 
   if (!canDeleteRoles.includes(req.user.role)) {
     return res.status(403).json({
@@ -210,17 +322,19 @@ const checkApprovalPermission = (req, res, next) => {
 const checkProjectPermission = (req, res, next) => {
   // Check subscription plan instead of account type
   // Only paid plans (personal_plus, pro, company_plan) can access projects
+  // Use effective plan (considers expiry)
   const paidPlans = ['personal_plus', 'pro', 'company_plan'];
-  const userPlan = req.user?.subscription?.plan || 'free';
+  const effectivePlan = req.user?.getEffectivePlan ? req.user.getEffectivePlan() : (req.user?.subscription?.plan || 'free');
 
-  if (!paidPlans.includes(userPlan)) {
+  if (!paidPlans.includes(effectivePlan)) {
     return res.status(403).json({
       success: false,
       error: {
         message: 'Projects feature requires a paid subscription plan',
         arabic: 'ميزة المشاريع تتطلب اشتراك مدفوع',
         statusCode: 403,
-        requiresUpgrade: true
+        requiresUpgrade: true,
+        isExpired: req.user?.isSubscriptionExpired || false
       }
     });
   }
@@ -277,7 +391,9 @@ const checkSubscription = (requiredPlan) => {
       'company_plan': 3
     };
 
-    const userPlanLevel = planHierarchy[req.user.subscription.plan] || 0;
+    // Use effective plan (considers expiry)
+    const effectivePlan = req.user?.getEffectivePlan ? req.user.getEffectivePlan() : (req.user?.subscription?.plan || 'free');
+    const userPlanLevel = planHierarchy[effectivePlan] || 0;
     const requiredPlanLevel = planHierarchy[requiredPlan] || 0;
 
     if (userPlanLevel < requiredPlanLevel) {
@@ -286,7 +402,8 @@ const checkSubscription = (requiredPlan) => {
         error: {
           message: `This feature requires ${requiredPlan} subscription plan`,
           arabic: `هذه الميزة تتطلب خطة اشتراك ${requiredPlan}`,
-          statusCode: 403
+          statusCode: 403,
+          isExpired: req.user?.isSubscriptionExpired || false
         }
       });
     }
@@ -297,13 +414,18 @@ const checkSubscription = (requiredPlan) => {
 
 // Check if user's subscription is active
 const checkActiveSubscription = (req, res, next) => {
-  if (req.user.subscription.status !== 'active') {
+  // Check using isSubscriptionActive method which considers expiry
+  const isActive = req.user?.isSubscriptionActive ? req.user.isSubscriptionActive() :
+    (req.user?.subscription?.status === 'active' && (!req.user?.subscription?.endDate || new Date() <= new Date(req.user.subscription.endDate)));
+
+  if (!isActive) {
     return res.status(403).json({
       success: false,
       error: {
         message: 'Subscription is not active',
-        arabic: 'الاشتراك غير نشط',
-        statusCode: 403
+        arabic: req.user?.isSubscriptionExpired ? 'انتهت صلاحية الاشتراك، يرجى التجديد' : 'الاشتراك غير نشط',
+        statusCode: 403,
+        isExpired: req.user?.isSubscriptionExpired || false
       }
     });
   }
@@ -315,6 +437,7 @@ module.exports = {
   protect,
   authorize,
   checkOwnership,
+  checkCreatePermission,
   checkEditPermission,
   checkViewPermission,
   checkDeletePermission,

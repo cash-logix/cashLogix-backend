@@ -18,6 +18,8 @@ const companyRoutes = require('./routes/companies');
 const categoryRoutes = require('./routes/categories');
 const adminRoutes = require('./routes/admin');
 const subscriptionRoutes = require('./routes/subscription');
+const supervisorRoutes = require('./routes/supervisors');
+const supervisorAuthRoutes = require('./routes/supervisorAuth');
 
 // Import middleware
 const errorHandler = require('./middleware/errorHandler');
@@ -143,6 +145,8 @@ app.use('/api/companies', companyRoutes);
 app.use('/api/categories', categoryRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/subscription', subscriptionRoutes);
+app.use('/api/supervisors', supervisorRoutes);
+app.use('/api/supervisor-auth', supervisorAuthRoutes);
 
 // 404 handler
 app.use(notFound);

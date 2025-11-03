@@ -27,17 +27,21 @@ class SubscriptionService {
       // Check if user needs daily/monthly reset
       await this.checkAndResetCounters(user);
 
+      // Get effective plan (considers expiry)
+      const effectivePlan = user.getEffectivePlan();
+
       // Check if action is allowed
       const canPerform = user.canPerformAction(actionType);
       const usage = user.getRemainingUsage(actionType);
 
       if (!canPerform) {
-        const upgradeMessage = this.getUpgradeMessage(user.subscription.plan, actionType, usage);
+        const upgradeMessage = this.getUpgradeMessage(effectivePlan, actionType, usage);
         return {
           allowed: false,
           message: upgradeMessage,
           usage,
-          currentPlan: user.subscription.plan
+          currentPlan: effectivePlan,
+          isExpired: user.isSubscriptionExpired
         };
       }
 
@@ -52,7 +56,8 @@ class SubscriptionService {
         allowed: true,
         message: 'Action allowed',
         usage: updatedUsage,
-        currentPlan: user.subscription.plan
+        currentPlan: effectivePlan,
+        isExpired: updatedUser.isSubscriptionExpired
       };
     } catch (error) {
       console.error('Error checking subscription limit:', error);
@@ -81,16 +86,60 @@ class SubscriptionService {
       // Check if user needs daily/monthly reset
       await this.checkAndResetCounters(user);
 
+      // Get effective plan (considers expiry)
+      const effectivePlan = user.getEffectivePlan();
+
+      // For supervisor, use actual count from database instead of stored counter
+      if (actionType === 'supervisor') {
+        const Supervisor = require('../models/Supervisor');
+        const actualSupervisorCount = await Supervisor.countDocuments({
+          user: userId,
+          isActive: true
+        });
+
+        const limits = user.getSubscriptionLimits();
+        const supervisorLimit = limits.supervisors;
+
+        const usage = {
+          used: actualSupervisorCount,
+          limit: supervisorLimit,
+          remaining: supervisorLimit === Infinity ? Infinity : Math.max(0, supervisorLimit - actualSupervisorCount)
+        };
+
+        const canPerform = supervisorLimit === Infinity || actualSupervisorCount < supervisorLimit;
+
+        if (!canPerform) {
+          const upgradeMessage = this.getUpgradeMessage(effectivePlan, actionType, usage);
+          return {
+            allowed: false,
+            message: upgradeMessage,
+            usage,
+            currentPlan: effectivePlan,
+            isExpired: user.isSubscriptionExpired
+          };
+        }
+
+        return {
+          allowed: true,
+          message: 'Action allowed',
+          usage,
+          currentPlan: effectivePlan,
+          isExpired: user.isSubscriptionExpired
+        };
+      }
+
+      // For other action types, use the standard method
       const canPerform = user.canPerformAction(actionType);
       const usage = user.getRemainingUsage(actionType);
 
       if (!canPerform) {
-        const upgradeMessage = this.getUpgradeMessage(user.subscription.plan, actionType, usage);
+        const upgradeMessage = this.getUpgradeMessage(effectivePlan, actionType, usage);
         return {
           allowed: false,
           message: upgradeMessage,
           usage,
-          currentPlan: user.subscription.plan
+          currentPlan: effectivePlan,
+          isExpired: user.isSubscriptionExpired
         };
       }
 
@@ -98,7 +147,8 @@ class SubscriptionService {
         allowed: true,
         message: 'Action allowed',
         usage,
-        currentPlan: user.subscription.plan
+        currentPlan: effectivePlan,
+        isExpired: user.isSubscriptionExpired
       };
     } catch (error) {
       console.error('Error checking subscription limit:', error);
@@ -189,8 +239,8 @@ class SubscriptionService {
         personal_plus: `لقد وصلت إلى الحد الشهري للإيرادات (${usage.limit} في الشهر). قم بالترقية إلى Pro للحصول على إيرادات غير محدودة.`
       },
       supervisor: {
-        free: `الخطة المجانية لا تدعم المشرفين. قم بالترقية إلى Personal Plus للحصول على 3 مشرفين أو Pro لمشرفين غير محدودين.`,
-        personal_plus: `لقد وصلت إلى الحد الأقصى للمشرفين (${usage.limit}). قم بالترقية إلى Pro للحصول على مشرفين غير محدودين.`
+        free: `الخطة المجانية لا تدعم المشرفين. قم بالترقية إلى Personal Plus للحصول على مشرف واحد أو Pro للحصول على 3 مشرفين.`,
+        personal_plus: `لقد وصلت إلى الحد الأقصى للمشرفين (${usage.limit}). قم بالترقية إلى Pro للحصول على 3 مشرفين.`
       },
       project: {
         free: `الخطة المجانية لا تدعم المشاريع. قم بالترقية إلى خطة مدفوعة للحصول على المشاريع.`,
@@ -223,19 +273,48 @@ class SubscriptionService {
       await this.checkAndResetCounters(user);
 
       const limits = user.getSubscriptionLimits();
+      const effectivePlan = user.getEffectivePlan();
+
+      // Get actual supervisor count from database (not the stored counter)
+      const Supervisor = require('../models/Supervisor');
+      const actualSupervisorCount = await Supervisor.countDocuments({
+        user: userId,
+        isActive: true
+      });
+
+      // Sync the counter with actual count
+      if (user.usageTracking.total.supervisors !== actualSupervisorCount) {
+        await User.findByIdAndUpdate(userId, {
+          $set: { 'usageTracking.total.supervisors': actualSupervisorCount }
+        });
+        // Reload user to get updated data
+        user = await User.findById(userId);
+      }
+
+      // Get supervisor usage with actual count
+      const supervisorUsage = {
+        used: actualSupervisorCount,
+        limit: limits.supervisors,
+        remaining: limits.supervisors === Infinity ? Infinity : Math.max(0, limits.supervisors - actualSupervisorCount)
+      };
 
       return {
-        plan: user.subscription.plan,
+        plan: effectivePlan,
+        originalPlan: user.subscription.plan,
         limits,
         usage: {
           voiceInputs: user.getRemainingUsage('voiceInput'),
           expenses: user.getRemainingUsage('expense'),
           revenues: user.getRemainingUsage('revenue'),
-          supervisors: user.getRemainingUsage('supervisor'),
+          supervisors: supervisorUsage,
           projects: user.getRemainingUsage('project'),
           partners: user.getRemainingUsage('partner')
         },
-        subscription: user.getSubscriptionInfo()
+        subscription: {
+          ...user.getSubscriptionInfo(),
+          isExpired: user.isSubscriptionExpired,
+          effectivePlan: effectivePlan
+        }
       };
     } catch (error) {
       console.error('Error getting usage stats:', error);
@@ -315,7 +394,7 @@ class SubscriptionService {
           voiceInputsPerDay: 20,
           expensesPerDay: 50,
           revenuesPerMonth: 20,
-          supervisors: 3,
+          supervisors: 1,
           projects: 0,
           partners: 0
         }
@@ -330,7 +409,7 @@ class SubscriptionService {
           voiceInputsPerDay: 'غير محدود',
           expensesPerDay: 'غير محدود',
           revenuesPerMonth: 'غير محدود',
-          supervisors: 'غير محدود',
+          supervisors: 3,
           projects: 'غير محدود',
           partners: 'غير محدود'
         }

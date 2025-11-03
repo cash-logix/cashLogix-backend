@@ -4,6 +4,7 @@ const mongoose = require('mongoose');
 const Expense = require('../models/Expense');
 const {
   protect,
+  checkCreatePermission,
   checkEditPermission,
   checkViewPermission,
   checkDeletePermission,
@@ -22,8 +23,9 @@ router.get('/', protect, checkViewPermission, async (req, res) => {
     const limit = parseInt(req.query.limit) || 20;
     const skip = (page - 1) * limit;
 
-    // Build query
-    let query = { user: req.user.id, status: 'active' };
+    // Build query - supervisors can view expenses for the user they're supervising
+    const userId = req.isSupervisor ? req.user._id : req.user.id;
+    let query = { user: userId, status: 'active' };
 
     // Filter by category
     if (req.query.category) {
@@ -225,11 +227,14 @@ router.get('/analytics', protect, checkViewPermission, async (req, res) => {
       endDate.setHours(23, 59, 59, 999);
     }
 
+    // Build query - supervisors can view expenses for the user they're supervising
+    const userId = req.isSupervisor ? req.user._id : req.user.id;
+
     // Category breakdown
     const categoryBreakdown = await Expense.aggregate([
       {
         $match: {
-          user: new mongoose.Types.ObjectId(req.user.id),
+          user: new mongoose.Types.ObjectId(userId),
           date: { $gte: startDate, $lte: endDate },
           status: 'active'
         }
@@ -250,7 +255,7 @@ router.get('/analytics', protect, checkViewPermission, async (req, res) => {
       monthlyTrend = await Expense.aggregate([
         {
           $match: {
-            user: new mongoose.Types.ObjectId(req.user.id),
+            user: new mongoose.Types.ObjectId(userId),
             date: { $gte: startDate, $lte: endDate },
             status: 'active'
           }
@@ -270,7 +275,7 @@ router.get('/analytics', protect, checkViewPermission, async (req, res) => {
     const paymentMethodBreakdown = await Expense.aggregate([
       {
         $match: {
-          user: new mongoose.Types.ObjectId(req.user.id),
+          user: new mongoose.Types.ObjectId(userId),
           date: { $gte: startDate, $lte: endDate },
           status: 'active'
         }
@@ -288,7 +293,7 @@ router.get('/analytics', protect, checkViewPermission, async (req, res) => {
     const totalSummary = await Expense.aggregate([
       {
         $match: {
-          user: new mongoose.Types.ObjectId(req.user.id),
+          user: new mongoose.Types.ObjectId(userId),
           date: { $gte: startDate, $lte: endDate },
           status: 'active'
         }
@@ -354,8 +359,10 @@ router.get('/:id', protect, checkViewPermission, async (req, res) => {
       });
     }
 
-    // Check if user can view this expense
-    if (expense.user.toString() !== req.user.id &&
+    // Check if user can view this expense (supervisors can view for supervised user)
+    const userId = req.isSupervisor ? req.user._id.toString() : req.user.id;
+    if (expense.user.toString() !== userId &&
+      !req.isSupervisor &&
       !['supervisor', 'company_owner'].includes(req.user.role)) {
       return res.status(403).json({
         success: false,
@@ -387,7 +394,7 @@ router.get('/:id', protect, checkViewPermission, async (req, res) => {
 // @desc    Create new expense
 // @route   POST /api/expenses
 // @access  Private
-router.post('/', protect, checkSubscriptionLimit('expense'), checkEditPermission, [
+router.post('/', protect, checkSubscriptionLimit('expense'), checkCreatePermission, [
   body('amount')
     .isFloat({ min: 0.01 })
     .withMessage('Amount must be greater than 0'),
@@ -762,9 +769,12 @@ router.delete('/:id', protect, checkDeletePermission, async (req, res) => {
 // @access  Private
 router.get('/stats/summary', protect, checkViewPermission, async (req, res) => {
   try {
+    // Build query - supervisors can view expenses for the user they're supervising
+    const userId = req.isSupervisor ? req.user._id : req.user.id;
+
     // Build match query with filters (same as expenses list endpoint)
     const matchQuery = {
-      user: new mongoose.Types.ObjectId(req.user.id),
+      user: new mongoose.Types.ObjectId(userId),
       status: 'active'
     };
 
@@ -824,7 +834,7 @@ router.get('/stats/summary', protect, checkViewPermission, async (req, res) => {
     if (req.query.year || req.query.month) {
       const currentYear = req.query.year ? parseInt(req.query.year) : new Date().getFullYear();
       const currentMonth = req.query.month ? parseInt(req.query.month) : new Date().getMonth() + 1;
-      monthlySummary = await Expense.getMonthlySummary(req.user.id, currentYear, currentMonth);
+      monthlySummary = await Expense.getMonthlySummary(userId, currentYear, currentMonth);
     }
 
     res.json({
@@ -961,7 +971,7 @@ router.put('/:id/reject', protect, checkApprovalPermission, [
 // @desc    Bulk operations on expenses
 // @route   POST /api/expenses/bulk
 // @access  Private
-router.post('/bulk', protect, checkEditPermission, [
+router.post('/bulk', protect, checkCreatePermission, [
   body('operation')
     .isIn(['delete', 'update_category', 'update_type', 'export'])
     .withMessage('Operation must be delete, update_category, update_type, or export'),

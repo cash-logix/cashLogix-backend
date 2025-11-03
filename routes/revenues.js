@@ -4,6 +4,7 @@ const mongoose = require('mongoose');
 const Revenue = require('../models/Revenue');
 const {
   protect,
+  checkCreatePermission,
   checkEditPermission,
   checkViewPermission,
   checkDeletePermission
@@ -21,8 +22,9 @@ router.get('/', protect, checkViewPermission, async (req, res) => {
     const limit = parseInt(req.query.limit) || 20;
     const skip = (page - 1) * limit;
 
-    // Build query
-    let query = { user: req.user.id, status: 'active' };
+    // Build query - supervisors can view revenues for the user they're supervising
+    const userId = req.isSupervisor ? req.user._id : req.user.id;
+    let query = { user: userId, status: 'active' };
 
     // Filter by category
     if (req.query.category) {
@@ -119,7 +121,7 @@ router.get('/', protect, checkViewPermission, async (req, res) => {
 // @desc    Create new revenue
 // @route   POST /api/revenues
 // @access  Private
-router.post('/', protect, checkSubscriptionLimit('revenue'), checkEditPermission, [
+router.post('/', protect, checkSubscriptionLimit('revenue'), checkCreatePermission, [
   body('amount')
     .isFloat({ min: 0.01 })
     .withMessage('Amount must be greater than 0'),
@@ -267,18 +269,21 @@ router.post('/', protect, checkSubscriptionLimit('revenue'), checkEditPermission
 // @access  Private
 router.get('/stats/summary', protect, checkViewPermission, async (req, res) => {
   try {
+    // Build query - supervisors can view revenues for the user they're supervising
+    const userId = req.isSupervisor ? req.user._id : req.user.id;
+
     const { year, month } = req.query;
     const currentYear = year ? parseInt(year) : new Date().getFullYear();
     const currentMonth = month ? parseInt(month) : new Date().getMonth() + 1;
 
     // Get monthly summary
-    const monthlySummary = await Revenue.getMonthlySummary(req.user.id, currentYear, currentMonth);
+    const monthlySummary = await Revenue.getMonthlySummary(userId, currentYear, currentMonth);
 
     // Get client summary
-    const clientSummary = await Revenue.getClientSummary(req.user.id);
+    const clientSummary = await Revenue.getClientSummary(userId);
 
     // Get overdue revenues
-    const overdueRevenues = await Revenue.findOverdue(req.user.id);
+    const overdueRevenues = await Revenue.findOverdue(userId);
 
     res.json({
       success: true,
@@ -325,8 +330,10 @@ router.get('/:id', protect, checkViewPermission, async (req, res) => {
       });
     }
 
-    // Check if user can view this revenue
-    if (revenue.user.toString() !== req.user.id &&
+    // Check if user can view this revenue (supervisors can view for supervised user)
+    const userId = req.isSupervisor ? req.user._id.toString() : req.user.id;
+    if (revenue.user.toString() !== userId &&
+      !req.isSupervisor &&
       !['supervisor', 'company_owner'].includes(req.user.role)) {
       return res.status(403).json({
         success: false,
@@ -571,9 +578,12 @@ router.get('/categories', protect, checkViewPermission, async (req, res) => {
   try {
     const { type } = req.query;
 
+    // Build query - supervisors can view revenues for the user they're supervising
+    const userId = req.isSupervisor ? req.user._id : req.user.id;
+
     // Get categories from user's revenues
     const matchQuery = {
-      user: req.user.id,
+      user: userId,
       status: 'active'
     };
 
@@ -654,11 +664,14 @@ router.get('/analytics', protect, checkViewPermission, async (req, res) => {
       endDate.setHours(23, 59, 59, 999);
     }
 
+    // Build query - supervisors can view revenues for the user they're supervising
+    const userId = req.isSupervisor ? req.user._id : req.user.id;
+
     // Category breakdown
     const categoryBreakdown = await Revenue.aggregate([
       {
         $match: {
-          user: new mongoose.Types.ObjectId(req.user.id),
+          user: new mongoose.Types.ObjectId(userId),
           date: { $gte: startDate, $lte: endDate },
           status: 'active'
         }
@@ -677,7 +690,7 @@ router.get('/analytics', protect, checkViewPermission, async (req, res) => {
     const clientBreakdown = await Revenue.aggregate([
       {
         $match: {
-          user: new mongoose.Types.ObjectId(req.user.id),
+          user: new mongoose.Types.ObjectId(userId),
           date: { $gte: startDate, $lte: endDate },
           status: 'active',
           client: { $exists: true, $ne: null }
@@ -697,7 +710,7 @@ router.get('/analytics', protect, checkViewPermission, async (req, res) => {
     const paymentStatusBreakdown = await Revenue.aggregate([
       {
         $match: {
-          user: new mongoose.Types.ObjectId(req.user.id),
+          user: new mongoose.Types.ObjectId(userId),
           date: { $gte: startDate, $lte: endDate },
           status: 'active'
         }
@@ -717,7 +730,7 @@ router.get('/analytics', protect, checkViewPermission, async (req, res) => {
       monthlyTrend = await Revenue.aggregate([
         {
           $match: {
-            user: new mongoose.Types.ObjectId(req.user.id),
+            user: new mongoose.Types.ObjectId(userId),
             date: { $gte: startDate, $lte: endDate },
             status: 'active'
           }
@@ -737,7 +750,7 @@ router.get('/analytics', protect, checkViewPermission, async (req, res) => {
     const totalSummary = await Revenue.aggregate([
       {
         $match: {
-          user: new mongoose.Types.ObjectId(req.user.id),
+          user: new mongoose.Types.ObjectId(userId),
           date: { $gte: startDate, $lte: endDate },
           status: 'active'
         }
@@ -869,8 +882,11 @@ router.put('/:id/payment-status', protect, checkEditPermission, [
 // @access  Private
 router.get('/overdue', protect, checkViewPermission, async (req, res) => {
   try {
+    // Build query - supervisors can view revenues for the user they're supervising
+    const userId = req.isSupervisor ? req.user._id : req.user.id;
+
     const overdueRevenues = await Revenue.find({
-      user: req.user.id,
+      user: userId,
       status: 'active',
       paymentStatus: 'overdue'
     })
