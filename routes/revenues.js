@@ -83,6 +83,39 @@ router.get('/', protect, checkViewPermission, async (req, res) => {
   }
 });
 
+// @desc    Get revenues for testing (description, category, price only) - NO AUTH REQUIRED
+// @route   GET /api/revenues/test-data
+// @access  Public (Temporary - for testing only)
+// router.get('/test-data', async (req, res) => {
+//   try {
+//     const revenues = await Revenue.find({
+//       status: 'active'
+//     }).select('description category amount');
+
+//     // Transform to simple objects
+//     const simpleRevenues = revenues.map(revenue => ({
+//       description: revenue.description || '',
+//       category: revenue.category,
+//       price: revenue.amount
+//     }));
+
+//     res.json({
+//       success: true,
+//       data: simpleRevenues
+//     });
+//   } catch (error) {
+//     console.error('Get test revenues error:', error);
+//     res.status(500).json({
+//       success: false,
+//       error: {
+//         message: 'Server error',
+//         arabic: 'خطأ في الخادم',
+//         statusCode: 500
+//       }
+//     });
+//   }
+// });
+
 // @desc    Create new revenue
 // @route   POST /api/revenues
 // @access  Private

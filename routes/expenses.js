@@ -762,44 +762,76 @@ router.delete('/:id', protect, checkDeletePermission, async (req, res) => {
 // @access  Private
 router.get('/stats/summary', protect, checkViewPermission, async (req, res) => {
   try {
-    const { year, month } = req.query;
-    const currentYear = year ? parseInt(year) : new Date().getFullYear();
-    const currentMonth = month ? parseInt(month) : new Date().getMonth() + 1;
+    // Build match query with filters (same as expenses list endpoint)
+    const matchQuery = {
+      user: new mongoose.Types.ObjectId(req.user.id),
+      status: 'active'
+    };
 
-    // Get monthly summary
-    const monthlySummary = await Expense.getMonthlySummary(req.user.id, currentYear, currentMonth);
+    // Filter by category
+    if (req.query.category) {
+      matchQuery.category = new RegExp(req.query.category, 'i');
+    }
 
-    // Get total expenses for the month
-    const startDate = new Date(currentYear, currentMonth - 1, 1);
-    const endDate = new Date(currentYear, currentMonth, 0, 23, 59, 59);
-
-    const totalExpenses = await Expense.aggregate([
-      {
-        $match: {
-          user: new mongoose.Types.ObjectId(req.user.id),
-          date: { $gte: startDate, $lte: endDate },
-          status: 'active'
-        }
-      },
-      {
-        $group: {
-          _id: null,
-          totalAmount: { $sum: '$amount' },
-          count: { $sum: 1 },
-          averageAmount: { $avg: '$amount' }
-        }
+    // Filter by date range (startDate/endDate take precedence over year/month)
+    if (req.query.startDate || req.query.endDate) {
+      matchQuery.date = {};
+      if (req.query.startDate) {
+        matchQuery.date.$gte = new Date(req.query.startDate);
       }
-    ]);
+      if (req.query.endDate) {
+        matchQuery.date.$lte = new Date(req.query.endDate);
+      }
+    } else if (req.query.year || req.query.month) {
+      // Use year/month if provided
+      const currentYear = req.query.year ? parseInt(req.query.year) : new Date().getFullYear();
+      const currentMonth = req.query.month ? parseInt(req.query.month) : new Date().getMonth() + 1;
+      const startDate = new Date(currentYear, currentMonth - 1, 1);
+      const endDate = new Date(currentYear, currentMonth, 0, 23, 59, 59);
+      matchQuery.date = { $gte: startDate, $lte: endDate };
+    }
+    // If no date filters provided, don't add date filter (shows all expenses)
+
+    // Add search filter to match query if provided
+    if (req.query.search) {
+      matchQuery.$or = [
+        { description: new RegExp(req.query.search, 'i') },
+        { category: new RegExp(req.query.search, 'i') }
+      ];
+    }
+
+    // Build aggregation pipeline
+    const pipeline = [
+      {
+        $match: matchQuery
+      }
+    ];
+
+    // Add grouping to calculate stats
+    pipeline.push({
+      $group: {
+        _id: null,
+        totalAmount: { $sum: '$amount' },
+        count: { $sum: 1 },
+        averageAmount: { $avg: '$amount' }
+      }
+    });
+
+    const totalExpenses = await Expense.aggregate(pipeline);
+
+    // Get monthly summary for backward compatibility (only if year/month provided)
+    let monthlySummary = null;
+    if (req.query.year || req.query.month) {
+      const currentYear = req.query.year ? parseInt(req.query.year) : new Date().getFullYear();
+      const currentMonth = req.query.month ? parseInt(req.query.month) : new Date().getMonth() + 1;
+      monthlySummary = await Expense.getMonthlySummary(req.user.id, currentYear, currentMonth);
+    }
 
     res.json({
       success: true,
       data: {
-        monthlySummary,
-        totalExpenses: totalExpenses[0] || { totalAmount: 0, count: 0, averageAmount: 0 },
-        period: {
-          year: currentYear,
-          month: currentMonth
-        }
+        ...(monthlySummary && { monthlySummary }),
+        totalExpenses: totalExpenses[0] || { totalAmount: 0, count: 0, averageAmount: 0 }
       }
     });
   } catch (error) {

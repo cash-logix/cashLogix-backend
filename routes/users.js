@@ -267,6 +267,99 @@ router.get('/:id', protect, async (req, res) => {
   }
 });
 
+// @desc    Update current user profile
+// @route   PUT /api/users/me
+// @access  Private
+router.put('/me', protect, [
+  body('firstName')
+    .optional()
+    .trim()
+    .isLength({ min: 2, max: 50 })
+    .withMessage('First name must be between 2 and 50 characters'),
+  body('lastName')
+    .optional()
+    .trim()
+    .isLength({ min: 2, max: 50 })
+    .withMessage('Last name must be between 2 and 50 characters'),
+  body('phone')
+    .optional()
+    .matches(/^(\+20|0)?1[0-9]{9}$/)
+    .withMessage('Please provide a valid Egyptian phone number'),
+  body('bio')
+    .optional()
+    .isLength({ max: 500 })
+    .withMessage('Bio cannot exceed 500 characters')
+], async (req, res) => {
+  try {
+    // Check for validation errors
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          message: 'Validation failed',
+          arabic: 'فشل التحقق من البيانات',
+          details: errors.array(),
+          statusCode: 400
+        }
+      });
+    }
+
+    const user = await User.findById(req.user.id);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        error: {
+          message: 'User not found',
+          arabic: 'المستخدم غير موجود',
+          statusCode: 404
+        }
+      });
+    }
+
+    // Check if user can update this profile
+    // For /me endpoint, user can always update their own profile
+    const { firstName, lastName, phone, bio, dateOfBirth, gender, preferences } = req.body;
+
+    // Update user fields
+    if (firstName !== undefined) user.firstName = firstName;
+    if (lastName !== undefined) user.lastName = lastName;
+    if (phone !== undefined) user.phone = phone;
+    if (bio !== undefined) user.bio = bio;
+    if (dateOfBirth !== undefined) user.dateOfBirth = dateOfBirth;
+    if (gender !== undefined) user.gender = gender;
+    if (preferences !== undefined) {
+      user.preferences = {
+        ...user.preferences,
+        ...preferences
+      };
+    }
+
+    await user.save();
+
+    const updatedUser = await User.findById(req.user.id)
+      .select('-password')
+      .populate('company', 'name');
+
+    res.json({
+      success: true,
+      message: 'Profile updated successfully',
+      arabic: 'تم تحديث الملف الشخصي بنجاح',
+      data: { user: updatedUser }
+    });
+  } catch (error) {
+    console.error('Update user error:', error);
+    res.status(500).json({
+      success: false,
+      error: {
+        message: 'Server error',
+        arabic: 'خطأ في الخادم',
+        statusCode: 500
+      }
+    });
+  }
+});
+
 // @desc    Update user profile
 // @route   PUT /api/users/:id
 // @access  Private
@@ -375,8 +468,8 @@ router.put('/:id/preferences', protect, [
     .withMessage('Language must be ar or en'),
   body('currency')
     .optional()
-    .isIn(['EGP', 'USD', 'EUR'])
-    .withMessage('Currency must be EGP, USD, or EUR'),
+    .isIn(['EGP', 'USD', 'EUR', 'SAR', 'AED', 'KWD', 'QAR', 'BHD', 'OMR', 'JOD', 'GBP', 'LBP', 'JPY', 'CNY', 'INR', 'TRY'])
+    .withMessage('Invalid currency code'),
   body('theme')
     .optional()
     .isIn(['light', 'dark', 'auto'])
