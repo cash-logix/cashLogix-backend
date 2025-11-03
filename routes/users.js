@@ -153,8 +153,23 @@ router.get('/', protect, authorize('supervisor', 'company_owner'), async (req, r
 
 // @desc    Get user invitations
 // @route   GET /api/users/invitations
-// @access  Private
+// @access  Private (Paid plans only)
 router.get('/invitations', protect, async (req, res) => {
+  // Check subscription plan - only paid plans can access invitations
+  const paidPlans = ['personal_plus', 'pro', 'company_plan'];
+  const userPlan = req.user?.subscription?.plan || 'free';
+
+  if (!paidPlans.includes(userPlan)) {
+    return res.status(403).json({
+      success: false,
+      error: {
+        message: 'Partner invitations feature requires a paid subscription plan',
+        arabic: 'ميزة دعوات الشركاء تتطلب اشتراك مدفوع',
+        statusCode: 403,
+        requiresUpgrade: true
+      }
+    });
+  }
   try {
     const Project = require('../models/Project');
 

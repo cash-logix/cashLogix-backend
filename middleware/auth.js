@@ -208,15 +208,19 @@ const checkApprovalPermission = (req, res, next) => {
 
 // Check if user can manage projects
 const checkProjectPermission = (req, res, next) => {
-  const canManageProjectRoles = ['individual_user', 'accountant', 'supervisor', 'company_owner'];
+  // Check subscription plan instead of account type
+  // Only paid plans (personal_plus, pro, company_plan) can access projects
+  const paidPlans = ['personal_plus', 'pro', 'company_plan'];
+  const userPlan = req.user?.subscription?.plan || 'free';
 
-  if (!canManageProjectRoles.includes(req.user.role)) {
+  if (!paidPlans.includes(userPlan)) {
     return res.status(403).json({
       success: false,
       error: {
-        message: 'Not authorized to manage projects',
-        arabic: 'غير مخول لإدارة المشاريع',
-        statusCode: 403
+        message: 'Projects feature requires a paid subscription plan',
+        arabic: 'ميزة المشاريع تتطلب اشتراك مدفوع',
+        statusCode: 403,
+        requiresUpgrade: true
       }
     });
   }

@@ -15,8 +15,8 @@ const router = express.Router();
 
 // @desc    Get all projects
 // @route   GET /api/projects
-// @access  Private
-router.get('/', protect, checkViewPermission, async (req, res) => {
+// @access  Private (Paid plans only)
+router.get('/', protect, checkSubscriptionLimitNoIncrement('project'), checkProjectPermission, async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
@@ -304,8 +304,8 @@ router.post('/:id/partners', protect, checkSubscriptionLimit('partner'), checkPr
 
 // @desc    Accept partner invitation
 // @route   PUT /api/projects/:id/partners/accept
-// @access  Private
-router.put('/:id/partners/accept', protect, async (req, res) => {
+// @access  Private (Paid plans only)
+router.put('/:id/partners/accept', protect, checkSubscriptionLimitNoIncrement('partner'), checkProjectPermission, async (req, res) => {
   try {
     const project = await Project.findById(req.params.id);
     if (!project) {
@@ -361,8 +361,8 @@ router.put('/:id/partners/accept', protect, async (req, res) => {
 
 // @desc    Get project statistics
 // @route   GET /api/projects/stats/summary
-// @access  Private
-router.get('/stats/summary', protect, checkViewPermission, async (req, res) => {
+// @access  Private (Paid plans only)
+router.get('/stats/summary', protect, checkSubscriptionLimitNoIncrement('project'), checkProjectPermission, async (req, res) => {
   try {
     const statistics = await Project.getStatistics(req.user.id);
 
@@ -385,8 +385,8 @@ router.get('/stats/summary', protect, checkViewPermission, async (req, res) => {
 
 // @desc    Search projects
 // @route   GET /api/projects/search
-// @access  Private
-router.get('/search', protect, checkViewPermission, async (req, res) => {
+// @access  Private (Paid plans only)
+router.get('/search', protect, checkSubscriptionLimitNoIncrement('project'), checkProjectPermission, async (req, res) => {
   try {
     const { q, status, priority, client } = req.query;
     const page = parseInt(req.query.page) || 1;
@@ -498,7 +498,7 @@ router.get('/search', protect, checkViewPermission, async (req, res) => {
 // @desc    Get project by ID
 // @route   GET /api/projects/:id
 // @access  Private
-router.get('/:id', protect, checkViewPermission, async (req, res) => {
+router.get('/:id', protect, checkSubscriptionLimitNoIncrement('project'), checkProjectPermission, async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -807,8 +807,8 @@ router.delete('/:id/partners/:partnerId', protect, checkEditPermission, async (r
 
 // @desc    Reject partner invitation
 // @route   PUT /api/projects/:id/partners/reject
-// @access  Private
-router.put('/:id/partners/reject', protect, async (req, res) => {
+// @access  Private (Paid plans only)
+router.put('/:id/partners/reject', protect, checkSubscriptionLimitNoIncrement('partner'), checkProjectPermission, async (req, res) => {
   try {
     const project = await Project.findById(req.params.id);
     if (!project) {
@@ -845,7 +845,7 @@ router.put('/:id/partners/reject', protect, async (req, res) => {
 // @desc    Get project budget tracking
 // @route   GET /api/projects/:id/budget
 // @access  Private
-router.get('/:id/budget', protect, checkViewPermission, async (req, res) => {
+router.get('/:id/budget', protect, checkSubscriptionLimitNoIncrement('project'), checkProjectPermission, async (req, res) => {
   try {
     const project = await Project.findById(req.params.id);
     if (!project) {
@@ -901,7 +901,7 @@ router.get('/:id/budget', protect, checkViewPermission, async (req, res) => {
 // @desc    Get project analytics
 // @route   GET /api/projects/:id/analytics
 // @access  Private
-router.get('/:id/analytics', protect, checkViewPermission, async (req, res) => {
+router.get('/:id/analytics', protect, checkSubscriptionLimitNoIncrement('project'), checkProjectPermission, async (req, res) => {
   try {
     const project = await Project.findById(req.params.id);
     if (!project) {
@@ -959,7 +959,7 @@ router.get('/:id/analytics', protect, checkViewPermission, async (req, res) => {
 // @desc    Get project partners
 // @route   GET /api/projects/:id/partners
 // @access  Private
-router.get('/:id/partners', protect, checkViewPermission, async (req, res) => {
+router.get('/:id/partners', protect, checkSubscriptionLimitNoIncrement('project'), checkProjectPermission, async (req, res) => {
   try {
     const project = await Project.findById(req.params.id)
       .populate('partners.user', 'firstName lastName email phone')
@@ -1111,8 +1111,8 @@ router.put('/:id/partners/:partnerId', protect, checkEditPermission, [
 
 // @desc    Get projects by status
 // @route   GET /api/projects/status/:status
-// @access  Private
-router.get('/status/:status', protect, checkViewPermission, async (req, res) => {
+// @access  Private (Paid plans only)
+router.get('/status/:status', protect, checkSubscriptionLimitNoIncrement('project'), checkProjectPermission, async (req, res) => {
   try {
     const { status } = req.params;
     const page = parseInt(req.query.page) || 1;
@@ -1215,7 +1215,7 @@ router.get('/status/:status', protect, checkViewPermission, async (req, res) => 
 // @desc    Get project expenses
 // @route   GET /api/projects/:id/expenses
 // @access  Private
-router.get('/:id/expenses', protect, checkViewPermission, async (req, res) => {
+router.get('/:id/expenses', protect, checkSubscriptionLimitNoIncrement('project'), checkProjectPermission, async (req, res) => {
   try {
     const { id } = req.params;
     const page = parseInt(req.query.page) || 1;
@@ -1298,7 +1298,7 @@ router.get('/:id/expenses', protect, checkViewPermission, async (req, res) => {
 // @desc    Get project revenues
 // @route   GET /api/projects/:id/revenues
 // @access  Private
-router.get('/:id/revenues', protect, checkViewPermission, async (req, res) => {
+router.get('/:id/revenues', protect, checkSubscriptionLimitNoIncrement('project'), checkProjectPermission, async (req, res) => {
   try {
     const { id } = req.params;
     const page = parseInt(req.query.page) || 1;
