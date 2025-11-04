@@ -5,6 +5,7 @@ const helmet = require('helmet');
 const compression = require('compression');
 const morgan = require('morgan');
 const rateLimit = require('express-rate-limit');
+const path = require('path');
 require('dotenv').config();
 
 // Import routes
@@ -113,8 +114,16 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization', 'Accept-Language']
 }));
 
-// Serve static files for uploads
-app.use('/uploads', express.static('uploads'));
+// Serve static files for uploads with CORS headers
+// Use absolute path to ensure correct file resolution
+app.use('/uploads', express.static(path.join(__dirname, 'uploads'), {
+  setHeaders: (res, filePath) => {
+    // Set CORS headers for static files
+    res.set('Access-Control-Allow-Origin', '*');
+    res.set('Access-Control-Allow-Methods', 'GET');
+    res.set('Access-Control-Allow-Headers', 'Content-Type');
+  }
+}));
 
 // Body parsing middleware
 app.use(express.json({ limit: '10mb' }));

@@ -419,30 +419,30 @@ router.get('/analytics', protect, isAdmin, async (req, res) => {
       User.countDocuments({ 'subscription.plan': 'pro' })
     ]);
 
-    // Get expense statistics
+    // Get expense statistics (counts include deleted, amounts only active)
     const [totalExpenses, voiceExpenses, totalExpensesAmount, voiceExpensesAmount] = await Promise.all([
-      Expense.countDocuments({ status: 'active' }),
-      Expense.countDocuments({ status: 'active', 'aiProcessing.isVoiceInput': true }),
+      Expense.countDocuments(), // All expenses including deleted
+      Expense.countDocuments({ 'aiProcessing.isVoiceInput': true }), // All voice expenses including deleted
       Expense.aggregate([
-        { $match: { status: 'active' } },
+        { $match: { status: 'active' } }, // Only active for amounts
         { $group: { _id: null, total: { $sum: '$amount' } } }
       ]),
       Expense.aggregate([
-        { $match: { status: 'active', 'aiProcessing.isVoiceInput': true } },
+        { $match: { status: 'active', 'aiProcessing.isVoiceInput': true } }, // Only active for amounts
         { $group: { _id: null, total: { $sum: '$amount' } } }
       ])
     ]);
 
-    // Get revenue statistics
+    // Get revenue statistics (counts include deleted, amounts only active)
     const [totalRevenues, voiceRevenues, totalRevenuesAmount, voiceRevenuesAmount] = await Promise.all([
-      Revenue.countDocuments({ status: 'active' }),
-      Revenue.countDocuments({ status: 'active', 'aiProcessing.isVoiceInput': true }),
+      Revenue.countDocuments(), // All revenues including deleted
+      Revenue.countDocuments({ 'aiProcessing.isVoiceInput': true }), // All voice revenues including deleted
       Revenue.aggregate([
-        { $match: { status: 'active' } },
+        { $match: { status: 'active' } }, // Only active for amounts
         { $group: { _id: null, total: { $sum: '$amount' } } }
       ]),
       Revenue.aggregate([
-        { $match: { status: 'active', 'aiProcessing.isVoiceInput': true } },
+        { $match: { status: 'active', 'aiProcessing.isVoiceInput': true } }, // Only active for amounts
         { $group: { _id: null, total: { $sum: '$amount' } } }
       ])
     ]);
@@ -489,40 +489,46 @@ router.get('/analytics', protect, isAdmin, async (req, res) => {
       }
     ]);
 
-    // Get expense trends (monthly)
+    // Get expense trends (monthly) - counts include deleted, amounts only active
     const expenseTrends = await Expense.aggregate([
-      { $match: { status: 'active' } },
       {
         $group: {
           _id: {
             year: { $year: '$date' },
             month: { $month: '$date' }
           },
-          count: { $sum: 1 },
-          totalAmount: { $sum: '$amount' },
+          count: { $sum: 1 }, // All expenses including deleted
+          totalAmount: {
+            $sum: {
+              $cond: [{ $eq: ['$status', 'active'] }, '$amount', 0]
+            }
+          }, // Only active amounts
           voiceCount: {
             $sum: { $cond: [{ $eq: ['$aiProcessing.isVoiceInput', true] }, 1, 0] }
-          }
+          } // All voice expenses including deleted
         }
       },
       { $sort: { '_id.year': -1, '_id.month': -1 } },
       { $limit: 12 }
     ]);
 
-    // Get revenue trends (monthly)
+    // Get revenue trends (monthly) - counts include deleted, amounts only active
     const revenueTrends = await Revenue.aggregate([
-      { $match: { status: 'active' } },
       {
         $group: {
           _id: {
             year: { $year: '$date' },
             month: { $month: '$date' }
           },
-          count: { $sum: 1 },
-          totalAmount: { $sum: '$amount' },
+          count: { $sum: 1 }, // All revenues including deleted
+          totalAmount: {
+            $sum: {
+              $cond: [{ $eq: ['$status', 'active'] }, '$amount', 0]
+            }
+          }, // Only active amounts
           voiceCount: {
             $sum: { $cond: [{ $eq: ['$aiProcessing.isVoiceInput', true] }, 1, 0] }
-          }
+          } // All voice revenues including deleted
         }
       },
       { $sort: { '_id.year': -1, '_id.month': -1 } },
