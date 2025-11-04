@@ -432,6 +432,52 @@ class SubscriptionService {
       }
     };
   }
+
+  /**
+   * Calculate subscription price based on plan and duration
+   * @param {String} plan - Plan name
+   * @param {Number} durationMonths - Duration in months (1-12)
+   * @returns {Number} Total price
+   */
+  static calculatePrice(plan, durationMonths) {
+    const pricing = this.getPlanPricing();
+    const planInfo = pricing[plan];
+
+    if (!planInfo) {
+      throw new Error('Invalid subscription plan');
+    }
+
+    if (planInfo.price === 'اتصل بنا' || typeof planInfo.price !== 'number') {
+      throw new Error('This plan requires custom pricing');
+    }
+
+    if (durationMonths < 1 || durationMonths > 12) {
+      throw new Error('Duration must be between 1 and 12 months');
+    }
+
+    return planInfo.price * durationMonths;
+  }
+
+  /**
+   * Get available subscription durations
+   * @returns {Array} Array of duration options
+   */
+  static getDurationOptions() {
+    return [
+      { value: 1, label: 'شهر واحد', labelEn: '1 Month' },
+      { value: 2, label: 'شهران', labelEn: '2 Months' },
+      { value: 3, label: '3 أشهر', labelEn: '3 Months' },
+      { value: 4, label: '4 أشهر', labelEn: '4 Months' },
+      { value: 5, label: '5 أشهر', labelEn: '5 Months' },
+      { value: 6, label: '6 أشهر', labelEn: '6 Months' },
+      { value: 7, label: '7 أشهر', labelEn: '7 Months' },
+      { value: 8, label: '8 أشهر', labelEn: '8 Months' },
+      { value: 9, label: '9 أشهر', labelEn: '9 Months' },
+      { value: 10, label: '10 أشهر', labelEn: '10 Months' },
+      { value: 11, label: '11 شهر', labelEn: '11 Months' },
+      { value: 12, label: 'سنة واحدة', labelEn: '1 Year' }
+    ];
+  }
 }
 
 module.exports = SubscriptionService;
