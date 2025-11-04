@@ -42,7 +42,7 @@ const userSchema = new mongoose.Schema({
   },
   accountType: {
     type: String,
-    enum: ['individual', 'contractor', 'company'],
+    enum: ['individual', 'contractor', 'company', 'admin'],
     default: 'individual',
     required: true
   },
@@ -54,7 +54,8 @@ const userSchema = new mongoose.Schema({
       'partner_view',
       'accountant',
       'supervisor',
-      'company_owner'
+      'company_owner',
+      'admin'
     ],
     default: 'individual_user'
   },

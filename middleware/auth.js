@@ -104,8 +104,9 @@ const protect = async (req, res, next) => {
         });
       }
 
-      // Check if email is verified (only for regular users, not supervisors)
-      if (!req.user.isEmailVerified) {
+      // Check if email is verified (only for regular users, not supervisors or admins)
+      const userIsAdmin = req.user.accountType === 'admin' || req.user.role === 'admin';
+      if (!userIsAdmin && !req.user.isEmailVerified) {
         return res.status(401).json({
           success: false,
           error: {
@@ -433,9 +434,39 @@ const checkActiveSubscription = (req, res, next) => {
   next();
 };
 
+// Admin middleware - check if user is admin
+const isAdmin = (req, res, next) => {
+  if (!req.user) {
+    return res.status(401).json({
+      success: false,
+      error: {
+        message: 'Not authorized',
+        arabic: 'غير مخول',
+        statusCode: 401
+      }
+    });
+  }
+
+  const userIsAdmin = req.user.accountType === 'admin' || req.user.role === 'admin';
+
+  if (!userIsAdmin) {
+    return res.status(403).json({
+      success: false,
+      error: {
+        message: 'Admin access required',
+        arabic: 'يتطلب الوصول كمسؤول',
+        statusCode: 403
+      }
+    });
+  }
+
+  next();
+};
+
 module.exports = {
   protect,
   authorize,
+  isAdmin,
   checkOwnership,
   checkCreatePermission,
   checkEditPermission,
