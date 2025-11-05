@@ -113,6 +113,85 @@ exports.getEstablishments = async (req, res) => {
   }
 };
 
+// @desc    Get establishment profile (for users)
+// @route   GET /api/dashboard/establishment/:id
+// @access  Public
+exports.getEstablishmentProfile = async (req, res) => {
+  try {
+    const establishmentId = req.params.id;
+
+    const establishment = await Establishment.findOne({
+      _id: establishmentId,
+      isVerified: true,
+    }).select('commercialName type logo email phone createdAt isVerified');
+
+    if (!establishment) {
+      return res.status(404).json({ message: 'Establishment not found' });
+    }
+
+    // Get analytics
+    const totalReceipts = await Receipt.countDocuments({ establishment: establishmentId });
+    const claimedReceipts = await Receipt.countDocuments({ establishment: establishmentId, claimed: true });
+    const unclaimedReceipts = totalReceipts - claimedReceipts;
+
+    // Get total points distributed
+    const allReceipts = await Receipt.find({ establishment: establishmentId, claimed: true });
+    const totalPointsDistributed = allReceipts.reduce((sum, receipt) => sum + receipt.amount, 0);
+
+    // Get total users with points from this establishment
+    const usersWithPoints = await User.find({
+      'points.establishment': establishmentId,
+    });
+    const totalUsers = usersWithPoints.length;
+
+    res.json({
+      establishment: {
+        id: establishment._id,
+        commercialName: establishment.commercialName,
+        type: establishment.type,
+        email: establishment.email,
+        phone: establishment.phone,
+        logo: establishment.logo || '',
+        createdAt: establishment.createdAt,
+      },
+      analytics: {
+        totalReceipts,
+        claimedReceipts,
+        unclaimedReceipts,
+        totalPointsDistributed,
+        totalUsers,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// @desc    Get platform statistics (for landing page)
+// @route   GET /api/dashboard/statistics
+// @access  Public
+exports.getStatistics = async (req, res) => {
+  try {
+    // Get total verified establishments
+    const totalEstablishments = await Establishment.countDocuments();
+
+    // Get total verified/active users
+    const totalUsers = await User.countDocuments();
+
+    // Get total points earned (sum of all claimed receipts)
+    const claimedReceipts = await Receipt.find({ claimed: true });
+    const totalPointsEarned = claimedReceipts.reduce((sum, receipt) => sum + receipt.amount, 0);
+
+    res.json({
+      totalEstablishments,
+      totalUsers,
+      totalPointsEarned,
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 // @desc    Search user by mobile, email, name, or receipt ID (for establishments)
 // @route   GET /api/dashboard/search-user
 // @access  Private (Establishment)

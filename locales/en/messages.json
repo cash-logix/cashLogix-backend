@@ -47,5 +47,15 @@
   "establishment": {
     "logo_uploaded": "Logo uploaded successfully",
     "logo_deleted": "Logo deleted successfully"
+  },
+  "item": {
+    "created_successfully": "Item created successfully",
+    "updated_successfully": "Item updated successfully",
+    "deleted_successfully": "Item deleted successfully",
+    "not_found": "Item not found",
+    "already_exists": "Item with this name already exists"
+  },
+  "user": {
+    "not_found": "User not found"
   }
 }

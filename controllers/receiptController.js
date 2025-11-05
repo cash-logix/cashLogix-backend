@@ -3,17 +3,49 @@ const User = require('../models/User');
 const Establishment = require('../models/Establishment');
 const crypto = require('crypto');
 
-// Helper function to generate random 8-character alphanumeric receipt ID
+// Helper function to generate random 8-digit receipt ID
 const generateReceiptId = () => {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789'; // Removed confusing chars (0, O, I, 1, l)
+  const digits = '0123456789';
   let receiptId = '';
   const randomBytes = crypto.randomBytes(8);
 
   for (let i = 0; i < 8; i++) {
-    receiptId += chars[randomBytes[i] % chars.length];
+    receiptId += digits[randomBytes[i] % digits.length];
   }
 
   return receiptId;
+};
+
+// Shared function to create receipt
+const createReceiptInternal = async (establishmentId, amount, metadata) => {
+  // Generate unique receipt ID
+  let receiptId;
+  let isUnique = false;
+  let attempts = 0;
+  const maxAttempts = 10;
+
+  while (!isUnique && attempts < maxAttempts) {
+    receiptId = generateReceiptId();
+    const existingReceipt = await Receipt.findOne({ receiptId });
+    if (!existingReceipt) {
+      isUnique = true;
+    }
+    attempts++;
+  }
+
+  if (!isUnique) {
+    throw new Error('Failed to generate unique receipt ID. Please try again.');
+  }
+
+  // Create receipt
+  const receipt = await Receipt.create({
+    receiptId,
+    establishment: establishmentId,
+    amount,
+    metadata,
+  });
+
+  return receipt;
 };
 
 // @desc    Create receipt (for establishments via API)
@@ -24,32 +56,31 @@ exports.createReceipt = async (req, res) => {
     const { amount, metadata } = req.body;
     const establishmentId = req.establishment._id;
 
-    // Generate unique receipt ID
-    let receiptId;
-    let isUnique = false;
-    let attempts = 0;
-    const maxAttempts = 10;
+    const receipt = await createReceiptInternal(establishmentId, amount, metadata);
 
-    while (!isUnique && attempts < maxAttempts) {
-      receiptId = generateReceiptId();
-      const existingReceipt = await Receipt.findOne({ receiptId });
-      if (!existingReceipt) {
-        isUnique = true;
-      }
-      attempts++;
-    }
-
-    if (!isUnique) {
-      return res.status(500).json({ message: 'Failed to generate unique receipt ID. Please try again.' });
-    }
-
-    // Create receipt
-    const receipt = await Receipt.create({
-      receiptId,
-      establishment: establishmentId,
-      amount,
-      metadata,
+    res.status(201).json({
+      message: req.t('receipt.created_successfully'),
+      receipt: {
+        id: receipt._id,
+        receiptId: receipt.receiptId,
+        amount: receipt.amount,
+        claimed: receipt.claimed,
+      },
     });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// @desc    Create receipt from dashboard (for establishments via JWT)
+// @route   POST /api/receipts/create
+// @access  Private (Establishment)
+exports.createReceiptFromDashboard = async (req, res) => {
+  try {
+    const { amount, metadata } = req.body;
+    const establishmentId = req.establishment._id;
+
+    const receipt = await createReceiptInternal(establishmentId, amount, metadata);
 
     res.status(201).json({
       message: req.t('receipt.created_successfully'),

@@ -31,6 +31,7 @@ app.use('/api/auth/establishment', require('./routes/establishmentAuthRoutes'));
 app.use('/api/establishment/profile', require('./routes/establishmentProfileRoutes'));
 app.use('/api/receipts', require('./routes/receiptRoutes'));
 app.use('/api/dashboard', require('./routes/dashboardRoutes'));
+app.use('/api/items', require('./routes/itemRoutes'));
 
 // Health check
 app.get('/api/health', (req, res) => {

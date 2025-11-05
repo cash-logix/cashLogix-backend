@@ -17,12 +17,12 @@
     "email_already_verified": "البريد الإلكتروني مفعل بالفعل"
   },
   "receipt": {
-    "created_successfully": "تم إنشاء الإيصال بنجاح",
-    "not_found": "الإيصال بهذا الرقم غير موجود",
-    "already_claimed": "لقد حصلت بالفعل على نقاط لهذا الإيصال",
+    "created_successfully": "تم إنشاء الفاتورة بنجاح",
+    "not_found": "الفاتورة بهذا الرقم غير موجودة",
+    "already_claimed": "لقد حصلت بالفعل على نقاط لهذه الفاتورة",
     "points_added": "تم إضافة النقاط بنجاح",
     "invalid_establishment": "المنشأة غير صالحة",
-    "already_exists": "إيصال بهذا الرقم موجود بالفعل"
+    "already_exists": "فاتورة بهذا الرقم موجودة بالفعل"
   },
   "points": {
     "deducted_successfully": "تم خصم النقاط بنجاح",
@@ -47,5 +47,15 @@
   "establishment": {
     "logo_uploaded": "تم رفع الشعار بنجاح",
     "logo_deleted": "تم حذف الشعار بنجاح"
+  },
+  "item": {
+    "created_successfully": "تم إنشاء العنصر بنجاح",
+    "updated_successfully": "تم تحديث العنصر بنجاح",
+    "deleted_successfully": "تم حذف العنصر بنجاح",
+    "not_found": "العنصر غير موجود",
+    "already_exists": "عنصر بهذا الاسم موجود بالفعل"
+  },
+  "user": {
+    "not_found": "المستخدم غير موجود"
   }
 }

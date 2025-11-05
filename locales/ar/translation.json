@@ -14,9 +14,9 @@
     "phone_already_exists": "رقم الهاتف موجود بالفعل"
   },
   "receipt": {
-    "created_successfully": "تم إنشاء الإيصال بنجاح",
-    "not_found": "الإيصال بهذا الرقم غير موجود",
-    "already_claimed": "لقد حصلت بالفعل على نقاط لهذا الإيصال",
+    "created_successfully": "تم إنشاء الفاتورة بنجاح",
+    "not_found": "الفاتورة بهذا الرقم غير موجود",
+    "already_claimed": "لقد حصلت بالفعل على نقاط لهذه الفاتورة",
     "points_added": "تم إضافة النقاط بنجاح",
     "invalid_establishment": "المنشأة غير صالحة"
   },

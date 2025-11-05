@@ -4,19 +4,23 @@ const {
   getUserDashboard,
   getEstablishmentDashboard,
   getEstablishments,
+  getEstablishmentProfile,
   searchUser,
+  getStatistics,
 } = require('../controllers/dashboardController');
 const { protectUser, protectEstablishment } = require('../middleware/auth');
 
 // User routes
 router.get('/user', protectUser, getUserDashboard);
 
-// Establishment routes
+// Public routes (must come before protected routes with similar paths)
+router.get('/establishments', getEstablishments);
+router.get('/establishment/:id', getEstablishmentProfile); // Public route for users to view establishment profiles
+router.get('/statistics', getStatistics);
+
+// Establishment routes (protected)
 router.get('/establishment', protectEstablishment, getEstablishmentDashboard);
 router.get('/search-user', protectEstablishment, searchUser);
-
-// Public routes
-router.get('/establishments', getEstablishments);
 
 module.exports = router;
 
