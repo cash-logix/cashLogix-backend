@@ -17,6 +17,11 @@ const receiptSchema = new mongoose.Schema({
     required: true,
     min: 0
   },
+  customerPhone: {
+    type: String,
+    trim: true,
+    default: ''
+  },
   claimed: {
     type: Boolean,
     default: false

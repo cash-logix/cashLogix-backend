@@ -17,7 +17,7 @@ const generateReceiptId = () => {
 };
 
 // Shared function to create receipt
-const createReceiptInternal = async (establishmentId, amount, metadata) => {
+const createReceiptInternal = async (establishmentId, amount, metadata, customerPhone = '') => {
   // Generate unique receipt ID
   let receiptId;
   let isUnique = false;
@@ -38,12 +38,19 @@ const createReceiptInternal = async (establishmentId, amount, metadata) => {
   }
 
   // Create receipt
-  const receipt = await Receipt.create({
+  const receiptData = {
     receiptId,
     establishment: establishmentId,
     amount,
     metadata,
-  });
+  };
+
+  // Add customer phone if provided
+  if (customerPhone && customerPhone.trim()) {
+    receiptData.customerPhone = customerPhone.trim();
+  }
+
+  const receipt = await Receipt.create(receiptData);
 
   return receipt;
 };
@@ -53,10 +60,10 @@ const createReceiptInternal = async (establishmentId, amount, metadata) => {
 // @access  Private (Establishment API Token)
 exports.createReceipt = async (req, res) => {
   try {
-    const { amount, metadata } = req.body;
+    const { amount, metadata, customerPhone } = req.body;
     const establishmentId = req.establishment._id;
 
-    const receipt = await createReceiptInternal(establishmentId, amount, metadata);
+    const receipt = await createReceiptInternal(establishmentId, amount, metadata, customerPhone);
 
     res.status(201).json({
       message: req.t('receipt.created_successfully'),
@@ -77,10 +84,10 @@ exports.createReceipt = async (req, res) => {
 // @access  Private (Establishment)
 exports.createReceiptFromDashboard = async (req, res) => {
   try {
-    const { amount, metadata } = req.body;
+    const { amount, metadata, customerPhone } = req.body;
     const establishmentId = req.establishment._id;
 
-    const receipt = await createReceiptInternal(establishmentId, amount, metadata);
+    const receipt = await createReceiptInternal(establishmentId, amount, metadata, customerPhone);
 
     res.status(201).json({
       message: req.t('receipt.created_successfully'),
@@ -128,14 +135,28 @@ exports.claimReceipt = async (req, res) => {
       (p) => p.establishment.toString() === establishmentId
     );
 
+    let balanceAfter;
     if (existingPoints) {
-      existingPoints.amount += receipt.amount;
+      existingPoints.amount = parseFloat((existingPoints.amount + receipt.amount).toFixed(2));
+      balanceAfter = existingPoints.amount;
     } else {
+      const newAmount = parseFloat(receipt.amount.toFixed(2));
       user.points.push({
         establishment: establishmentId,
-        amount: receipt.amount,
+        amount: newAmount,
       });
+      balanceAfter = newAmount;
     }
+
+    // Record points history
+    user.pointsHistory.push({
+      type: 'earned',
+      amount: parseFloat(receipt.amount.toFixed(2)),
+      establishment: establishmentId,
+      receipt: receipt._id,
+      description: `Points earned from receipt #${receipt.receiptId}`,
+      balanceAfter: balanceAfter,
+    });
 
     await user.save();
 
@@ -199,18 +220,70 @@ exports.deductPoints = async (req, res) => {
       (p) => p.establishment.toString() === establishmentId.toString()
     );
 
-    if (!userPoints || userPoints.amount < points) {
+    const pointsToDeduct = parseFloat(points);
+
+    if (!userPoints || userPoints.amount < pointsToDeduct) {
       return res.status(400).json({ message: req.t('points.insufficient_points') });
     }
 
-    userPoints.amount -= points;
+    // Calculate balance after deduction
+    const balanceAfter = parseFloat((userPoints.amount - pointsToDeduct).toFixed(2));
+    userPoints.amount = balanceAfter;
+
+    // Get establishment name for description
+    const establishment = await Establishment.findById(establishmentId);
+    const establishmentName = establishment ? establishment.commercialName : 'Establishment';
+
+    // Record points history
+    user.pointsHistory.push({
+      type: 'deducted',
+      amount: pointsToDeduct,
+      establishment: establishmentId,
+      description: `Points deducted by ${establishmentName}`,
+      balanceAfter: balanceAfter,
+    });
+
     await user.save();
 
     res.json({
       message: req.t('points.deducted_successfully'),
-      pointsDeducted: points,
-      remainingPoints: userPoints.amount,
+      pointsDeducted: pointsToDeduct,
+      remainingPoints: balanceAfter,
     });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// @desc    Get customer phone numbers by prefix (for establishments)
+// @route   GET /api/receipts/customer-phones
+// @access  Private (Establishment)
+exports.getCustomerPhones = async (req, res) => {
+  try {
+    const establishmentId = req.establishment._id;
+    const { prefix = '' } = req.query;
+
+    // Build query to find receipts with customer phone numbers
+    const query = {
+      establishment: establishmentId,
+      customerPhone: { $exists: true, $ne: '' },
+    };
+
+    // If prefix is provided, filter by phone numbers that start with it
+    if (prefix.trim()) {
+      query.customerPhone = { $regex: `^${prefix.trim()}`, $options: 'i' };
+    }
+
+    // Get unique customer phone numbers using distinct
+    const uniquePhones = await Receipt.distinct('customerPhone', query);
+
+    // Filter and sort phone numbers
+    const filteredPhones = uniquePhones
+      .filter(phone => phone && phone.trim() && phone.toString().startsWith(prefix.trim()))
+      .sort()
+      .slice(0, 10); // Limit to 10 suggestions
+
+    res.json({ phones: filteredPhones });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }

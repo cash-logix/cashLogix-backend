@@ -19,6 +19,17 @@ exports.getUserDashboard = async (req, res) => {
       .sort({ claimedAt: -1 })
       .limit(10);
 
+    // Get unclaimed receipts by user's phone number
+    let unclaimedReceipts = [];
+    if (user.mobile && user.mobile.trim()) {
+      unclaimedReceipts = await Receipt.find({
+        customerPhone: user.mobile.trim(),
+        claimed: false,
+      })
+        .populate('establishment', 'commercialName type logo')
+        .sort({ createdAt: -1 });
+    }
+
     res.json({
       user: {
         id: user._id,
@@ -28,6 +39,8 @@ exports.getUserDashboard = async (req, res) => {
       },
       points: user.points,
       recentReceipts: claimedReceipts,
+      unclaimedReceipts: unclaimedReceipts,
+      unclaimedReceiptsCount: unclaimedReceipts.length,
     });
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -254,6 +267,104 @@ exports.searchUser = async (req, res) => {
     }
 
     res.json({ users: usersList });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// @desc    Get points history for all users at establishment
+// @route   GET /api/dashboard/points-history
+// @access  Private (Establishment)
+exports.getPointsHistory = async (req, res) => {
+  try {
+    const establishmentId = req.establishment._id;
+    const { page = 1, limit = 50, userId, type } = req.query;
+
+    // Build query to find users with points history from this establishment
+    const query = {
+      'pointsHistory.establishment': establishmentId,
+    };
+
+    if (userId) {
+      query._id = userId;
+    }
+
+    // Get users with points history
+    const users = await User.find(query)
+      .select('name email mobile pointsHistory')
+      .populate('pointsHistory.establishment', 'commercialName type logo')
+      .populate('pointsHistory.receipt', 'receiptId amount');
+
+    // Extract and filter history entries
+    let allHistory = [];
+    users.forEach((user) => {
+      const establishmentHistory = user.pointsHistory
+        .filter((entry) => {
+          const entryEstablishmentId = entry.establishment._id
+            ? entry.establishment._id.toString()
+            : entry.establishment.toString();
+          return entryEstablishmentId === establishmentId.toString();
+        })
+        .map((entry) => {
+          const entryObj = entry.toObject ? entry.toObject() : entry;
+          return {
+            ...entryObj,
+            user: {
+              _id: user._id,
+              name: user.name,
+              email: user.email,
+              mobile: user.mobile,
+            },
+          };
+        });
+
+      allHistory = allHistory.concat(establishmentHistory);
+    });
+
+    // Filter by type if provided
+    if (type && (type === 'earned' || type === 'deducted')) {
+      allHistory = allHistory.filter((entry) => entry.type === type);
+    }
+
+    // Sort by date (newest first)
+    allHistory.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+    // Pagination
+    const total = allHistory.length;
+    const startIndex = (page - 1) * limit;
+    const endIndex = startIndex + parseInt(limit);
+    const paginatedHistory = allHistory.slice(startIndex, endIndex);
+
+    res.json({
+      history: paginatedHistory,
+      total,
+      totalPages: Math.ceil(total / limit),
+      currentPage: parseInt(page),
+      limit: parseInt(limit),
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// @desc    Get receipts by phone number (for users)
+// @route   GET /api/dashboard/user/receipts
+// @access  Private (User)
+exports.getUserReceipts = async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const user = await User.findById(userId).select('mobile');
+
+    if (!user || !user.mobile) {
+      return res.json({ receipts: [] });
+    }
+
+    // Find receipts by customer phone number
+    const receipts = await Receipt.find({ customerPhone: user.mobile })
+      .populate('establishment', 'commercialName type logo')
+      .sort({ createdAt: -1 });
+
+    res.json({ receipts });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }

@@ -1,8 +1,8 @@
-# FoodX Loyalty System - Backend API
+# Rage3 Loyalty System - Backend API
 
 ## Overview
 
-Backend API for the FoodX loyalty system that allows establishments to create receipts and users to collect points.
+Backend API for the Rage3 loyalty system that allows establishments to create receipts and users to collect points.
 
 ## Setup
 
@@ -23,14 +23,14 @@ npm install
 
 ```
 PORT=5000
-MONGODB_URI=mongodb://localhost:27017/foodx
+MONGODB_URI=mongodb://localhost:27017/Rage3
 JWT_SECRET=your_jwt_secret_key_change_this_in_production
 JWT_EXPIRE=7d
 EMAIL_HOST=smtp.gmail.com
 EMAIL_PORT=587
 EMAIL_USER=your_email@gmail.com
 EMAIL_PASSWORD=your_email_password
-EMAIL_FROM=noreply@foodx.com
+EMAIL_FROM=noreply@Rage3.com
 CLIENT_URL=http://localhost:3000
 ```
 

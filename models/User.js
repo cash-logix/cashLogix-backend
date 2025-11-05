@@ -41,6 +41,38 @@ const userSchema = new mongoose.Schema({
       type: Number,
       default: 0
     }
+  }],
+  pointsHistory: [{
+    type: {
+      type: String,
+      enum: ['earned', 'deducted'],
+      required: true
+    },
+    amount: {
+      type: Number,
+      required: true
+    },
+    establishment: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Establishment',
+      required: true
+    },
+    receipt: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Receipt'
+    },
+    description: {
+      type: String,
+      default: ''
+    },
+    balanceAfter: {
+      type: Number,
+      required: true
+    },
+    createdAt: {
+      type: Date,
+      default: Date.now
+    }
   }]
 }, {
   timestamps: true

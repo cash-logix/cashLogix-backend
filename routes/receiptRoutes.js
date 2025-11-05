@@ -6,6 +6,7 @@ const {
   claimReceipt,
   getEstablishmentReceipts,
   deductPoints,
+  getCustomerPhones,
 } = require('../controllers/receiptController');
 const { protectUser, protectEstablishment, protectEstablishmentAPI } = require('../middleware/auth');
 
@@ -15,6 +16,7 @@ router.post('/', protectEstablishmentAPI, createReceipt);
 // Establishment routes (JWT Authentication)
 router.post('/create', protectEstablishment, createReceiptFromDashboard);
 router.get('/establishment', protectEstablishment, getEstablishmentReceipts);
+router.get('/customer-phones', protectEstablishment, getCustomerPhones);
 router.post('/deduct-points', protectEstablishment, deductPoints);
 
 // User routes
