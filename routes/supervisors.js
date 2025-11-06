@@ -77,6 +77,12 @@ router.post('/', protect, [
 
     // Get subscription limits
     const user = await User.findById(req.user.id);
+    
+    // Check if user is in active free trial - they get 1 supervisor
+    const isInActiveFreeTrial = user.subscription.freeTrial?.isActive &&
+      user.subscription.freeTrial?.endDate &&
+      new Date() <= new Date(user.subscription.freeTrial.endDate);
+
     const limits = user.getSubscriptionLimits();
     const supervisorLimit = limits.supervisors;
 
@@ -89,7 +95,14 @@ router.post('/', protect, [
       };
 
       // Get upgrade message
-      const upgradeMessage = SubscriptionService.getUpgradeMessage(user.subscription.plan, 'supervisor', usage);
+      const effectivePlan = user.getEffectivePlan();
+      let upgradeMessage;
+      
+      if (isInActiveFreeTrial) {
+        upgradeMessage = 'لقد وصلت إلى الحد الأقصى للمشرفين في التجربة المجانية (1 مشرف). قم بالترقية لإضافة المزيد.';
+      } else {
+        upgradeMessage = SubscriptionService.getUpgradeMessage(effectivePlan, 'supervisor', usage);
+      }
 
       return res.status(403).json({
         success: false,

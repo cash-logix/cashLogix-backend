@@ -6,6 +6,7 @@ const compression = require('compression');
 const morgan = require('morgan');
 const rateLimit = require('express-rate-limit');
 const path = require('path');
+const cron = require('node-cron');
 require('dotenv').config();
 
 // Import routes
@@ -168,23 +169,6 @@ app.use(notFound);
 // Error handling middleware
 app.use(errorHandler);
 
-// Database connection
-const connectDB = async () => {
-  try {
-    const mongoURI = process.env.NODE_ENV === 'test'
-      ? process.env.MONGODB_TEST_URI
-      : process.env.MONGODB_URI;
-
-    await mongoose.connect(mongoURI);
-
-    console.log('✅ MongoDB connected successfully');
-    console.log(`📊 Database: ${mongoose.connection.name}`);
-    console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
-  } catch (error) {
-    console.error('❌ MongoDB connection error:', error.message);
-    process.exit(1);
-  }
-};
 
 // Graceful shutdown
 process.on('SIGINT', async () => {
@@ -201,30 +185,158 @@ process.on('SIGTERM', async () => {
   process.exit(0);
 });
 
+// Scheduled tasks
+const setupScheduledTasks = () => {
+  // Import scheduled task functions
+  const User = require('./models/User');
+  const checkExpiredFreeTrials = require('./scripts/checkExpiredFreeTrials');
+
+  // Check for expired free trials - runs every hour
+  cron.schedule('0 * * * *', async () => {
+    // Only run if MongoDB is connected
+    if (mongoose.connection.readyState !== 1) {
+      console.log('⏰ Skipping scheduled task: MongoDB not connected');
+      return;
+    }
+    console.log('⏰ Running scheduled task: Check expired free trials');
+    try {
+      await checkExpiredFreeTrials();
+    } catch (error) {
+      console.error('❌ Error in free trial check task:', error);
+    }
+  });
+
+  // Check for expired subscriptions - runs every hour
+  cron.schedule('0 * * * *', async () => {
+    // Only run if MongoDB is connected
+    if (mongoose.connection.readyState !== 1) {
+      console.log('⏰ Skipping scheduled task: MongoDB not connected');
+      return;
+    }
+    console.log('⏰ Running scheduled task: Check expired subscriptions');
+    try {
+      await User.updateExpiredSubscriptions();
+    } catch (error) {
+      console.error('❌ Error in subscription check task:', error);
+    }
+  });
+
+  // Reset daily counters - runs at midnight (00:00) every day
+  cron.schedule('0 0 * * *', async () => {
+    // Only run if MongoDB is connected
+    if (mongoose.connection.readyState !== 1) {
+      console.log('⏰ Skipping scheduled task: MongoDB not connected');
+      return;
+    }
+    console.log('⏰ Running scheduled task: Reset daily counters');
+    try {
+      await User.resetDailyCounters();
+    } catch (error) {
+      console.error('❌ Error in daily reset task:', error);
+    }
+  });
+
+  // Reset monthly counters - runs at midnight on the 1st of each month
+  cron.schedule('0 0 1 * *', async () => {
+    // Only run if MongoDB is connected
+    if (mongoose.connection.readyState !== 1) {
+      console.log('⏰ Skipping scheduled task: MongoDB not connected');
+      return;
+    }
+    console.log('⏰ Running scheduled task: Reset monthly counters');
+    try {
+      await User.resetMonthlyCounters();
+    } catch (error) {
+      console.error('❌ Error in monthly reset task:', error);
+    }
+  });
+
+  console.log('⏰ Scheduled tasks initialized:');
+  console.log('   - Free trial expiration check: Every hour');
+  console.log('   - Subscription expiration check: Every hour');
+  console.log('   - Daily counter reset: Every day at midnight');
+  console.log('   - Monthly counter reset: 1st of each month at midnight');
+};
+
+// Database connection
+const connectDB = async () => {
+  try {
+    const mongoURI = process.env.NODE_ENV === 'test'
+      ? process.env.MONGODB_TEST_URI
+      : process.env.MONGODB_URI;
+
+    if (!mongoURI) {
+      throw new Error('MongoDB URI is not defined in environment variables');
+    }
+
+    // Connection options for better reliability
+    const options = {
+      serverSelectionTimeoutMS: 5000, // Timeout after 5s instead of 30s
+      socketTimeoutMS: 45000, // Close sockets after 45s of inactivity
+    };
+
+    await mongoose.connect(mongoURI, options);
+
+    console.log('✅ MongoDB connected successfully');
+    console.log(`📊 Database: ${mongoose.connection.name}`);
+    console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
+
+    // Handle connection events
+    mongoose.connection.on('error', (err) => {
+      console.error('❌ MongoDB connection error:', err);
+    });
+
+    mongoose.connection.on('disconnected', () => {
+      console.warn('⚠️  MongoDB disconnected');
+    });
+
+    mongoose.connection.on('reconnected', () => {
+      console.log('✅ MongoDB reconnected');
+    });
+
+    return true;
+  } catch (error) {
+    console.error('❌ MongoDB connection error:', error.message);
+    throw error;
+  }
+};
+
 // Start server
 const PORT = process.env.PORT || 5000;
 const startServer = async () => {
-  await connectDB();
+  try {
+    // Connect to database first
+    console.log('🔄 Connecting to MongoDB...');
+    await connectDB();
 
-  app.listen(PORT, () => {
-    console.log('\n🚀 Cash Logix Backend Server Started!');
-    console.log(`📡 Server running on port ${PORT}`);
-    console.log(`🌐 Environment: ${process.env.NODE_ENV || 'development'}`);
-    console.log(`🔗 Health check: http://localhost:${PORT}/health`);
-    console.log(`📚 API Base URL: http://localhost:${PORT}/api`);
-    console.log('\n📋 Available endpoints:');
-    console.log('   POST /api/auth/register - User registration');
-    console.log('   POST /api/auth/login - User login');
-    console.log('   GET  /api/expenses - Get expenses');
-    console.log('   POST /api/expenses - Create expense');
-    console.log('   GET  /api/revenues - Get revenues');
-    console.log('   POST /api/revenues - Create revenue');
-    console.log('   GET  /api/projects - Get projects');
-    console.log('   POST /api/projects - Create project');
-    console.log('   GET  /api/companies - Get companies');
-    console.log('   POST /api/companies - Create company');
-    console.log('\n✨ Ready to handle requests!\n');
-  });
+    // Initialize scheduled tasks after DB connection
+    setupScheduledTasks();
+
+    // Start the server only after database is connected
+    app.listen(PORT, () => {
+      console.log('\n🚀 Cash Logix Backend Server Started!');
+      console.log(`📡 Server running on port ${PORT}`);
+      console.log(`🌐 Environment: ${process.env.NODE_ENV || 'development'}`);
+      console.log(`🔗 Health check: http://localhost:${PORT}/health`);
+      console.log(`📚 API Base URL: http://localhost:${PORT}/api`);
+      console.log('\n📋 Available endpoints:');
+      console.log('   POST /api/auth/register - User registration');
+      console.log('   POST /api/auth/login - User login');
+      console.log('   GET  /api/expenses - Get expenses');
+      console.log('   POST /api/expenses - Create expense');
+      console.log('   GET  /api/revenues - Get revenues');
+      console.log('   POST /api/revenues - Create revenue');
+      console.log('   GET  /api/projects - Get projects');
+      console.log('   POST /api/projects - Create project');
+      console.log('   GET  /api/companies - Get companies');
+      console.log('   POST /api/companies - Create company');
+      console.log('\n✨ Ready to handle requests!\n');
+    });
+  } catch (error) {
+    console.error('❌ Failed to start server:', error.message);
+    console.error('💡 Make sure MongoDB is running and MONGODB_URI is set correctly');
+    process.exit(1);
+  }
 };
 
 // Handle unhandled promise rejections

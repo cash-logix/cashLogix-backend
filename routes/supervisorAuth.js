@@ -71,6 +71,45 @@ router.post('/login', [
       });
     }
 
+    // Check if the user (owner) still has access to supervisors
+    // Supervisors can only login if user is in free trial OR on a paid plan
+    const User = require('../models/User');
+    const owner = await User.findById(supervisor.user);
+    
+    if (!owner) {
+      return res.status(401).json({
+        success: false,
+        error: {
+          message: 'User account not found',
+          arabic: 'حساب المستخدم غير موجود',
+          statusCode: 401
+        }
+      });
+    }
+
+    // Check if user is in active free trial
+    const isInActiveFreeTrial = owner.subscription.freeTrial?.isActive &&
+      owner.subscription.freeTrial?.endDate &&
+      new Date() <= new Date(owner.subscription.freeTrial.endDate);
+
+    // Check if user has a paid plan
+    const effectivePlan = owner.getEffectivePlan ? owner.getEffectivePlan() : owner.subscription.plan;
+    const paidPlans = ['personal_plus', 'pro', 'company_plan'];
+    const hasPaidPlan = paidPlans.includes(effectivePlan);
+
+    // If user is not in free trial and not on paid plan, block supervisor login
+    if (!isInActiveFreeTrial && !hasPaidPlan) {
+      return res.status(403).json({
+        success: false,
+        error: {
+          message: 'Supervisor access is no longer available. The account owner needs to upgrade to a paid plan.',
+          arabic: 'لم يعد الوصول كـمشرف متاحاً. يحتاج صاحب الحساب إلى الترقية إلى خطة مدفوعة.',
+          statusCode: 403,
+          requiresUpgrade: true
+        }
+      });
+    }
+
     // Check password
     const isPasswordValid = await supervisor.comparePassword(password);
     if (!isPasswordValid) {

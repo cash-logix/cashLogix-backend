@@ -1,9 +1,23 @@
 const jwt = require('jsonwebtoken');
+const mongoose = require('mongoose');
 const User = require('../models/User');
 const Supervisor = require('../models/Supervisor');
 
 // Protect routes - verify JWT token (supports both users and supervisors)
 const protect = async (req, res, next) => {
+  // Check if MongoDB is connected before processing
+  if (mongoose.connection.readyState !== 1) {
+    console.error('Auth middleware error: MongoDB not connected');
+    return res.status(503).json({
+      success: false,
+      error: {
+        message: 'Service temporarily unavailable - database connection issue',
+        arabic: 'الخدمة غير متاحة مؤقتاً - مشكلة في الاتصال بقاعدة البيانات',
+        statusCode: 503
+      }
+    });
+  }
+
   let token;
 
   // Check for token in headers
@@ -323,6 +337,16 @@ const checkApprovalPermission = (req, res, next) => {
 const checkProjectPermission = (req, res, next) => {
   // Check subscription plan instead of account type
   // Only paid plans (personal_plus, pro, company_plan) can access projects
+  // Check if user is in active free trial - they get access to projects
+  const isInActiveFreeTrial = req.user?.subscription?.freeTrial?.isActive &&
+    req.user?.subscription?.freeTrial?.endDate &&
+    new Date() <= new Date(req.user.subscription.freeTrial.endDate);
+
+  // If in free trial, allow access
+  if (isInActiveFreeTrial) {
+    return next();
+  }
+
   // Use effective plan (considers expiry)
   const paidPlans = ['personal_plus', 'pro', 'company_plan'];
   const effectivePlan = req.user?.getEffectivePlan ? req.user.getEffectivePlan() : (req.user?.subscription?.plan || 'free');

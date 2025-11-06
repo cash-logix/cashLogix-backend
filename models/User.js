@@ -479,13 +479,13 @@ userSchema.methods.getSubscriptionLimits = function () {
     this.subscription.freeTrial?.endDate &&
     new Date() < new Date(this.subscription.freeTrial.endDate);
 
-  // If in active free trial, return unlimited limits (same as pro plan)
+  // If in active free trial, return trial limits (1 supervisor, unlimited other features)
   if (isInActiveFreeTrial) {
     return {
       voiceInputsPerDay: Infinity,
       expensesPerDay: Infinity,
       revenuesPerMonth: Infinity,
-      supervisors: Infinity,
+      supervisors: 1, // Free trial users get 1 supervisor
       projects: Infinity,
       partners: Infinity
     };

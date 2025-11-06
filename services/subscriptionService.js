@@ -27,6 +27,78 @@ class SubscriptionService {
       // Check if user needs daily/monthly reset
       await this.checkAndResetCounters(user);
 
+      // Check if user is in active free trial - they get unlimited access
+      const isInActiveFreeTrial = user.subscription.freeTrial?.isActive &&
+        user.subscription.freeTrial?.endDate &&
+        new Date() <= new Date(user.subscription.freeTrial.endDate);
+
+      if (isInActiveFreeTrial) {
+        // Free trial users get 1 supervisor, unlimited other features
+        if (actionType === 'supervisor') {
+          // For supervisors, check actual count and limit to 1
+          const Supervisor = require('../models/Supervisor');
+          const actualSupervisorCount = await Supervisor.countDocuments({
+            user: userId,
+            isActive: true
+          });
+
+          if (actualSupervisorCount >= 1) {
+            const usage = {
+              used: actualSupervisorCount,
+              limit: 1,
+              remaining: 0
+            };
+
+            return {
+              allowed: false,
+              message: 'لقد وصلت إلى الحد الأقصى للمشرفين في التجربة المجانية (1 مشرف). قم بالترقية لإضافة المزيد.',
+              usage,
+              currentPlan: 'free_trial',
+              isExpired: false,
+              isFreeTrial: true
+            };
+          }
+
+          // Allow creation and increment
+          await user.incrementUsage(actionType);
+          const updatedUser = await User.findById(userId);
+          const updatedUsage = {
+            used: actualSupervisorCount + 1,
+            limit: 1,
+            remaining: 0
+          };
+
+          return {
+            allowed: true,
+            message: 'Action allowed (free trial)',
+            usage: updatedUsage,
+            currentPlan: 'free_trial',
+            isExpired: false,
+            isFreeTrial: true
+          };
+        } else {
+          // For other actions, unlimited access
+          await user.incrementUsage(actionType);
+          const updatedUser = await User.findById(userId);
+          const updatedUsage = updatedUser.getRemainingUsage(actionType);
+          // Override with Infinity for trial users
+          const trialUsage = {
+            used: updatedUsage.used || 0,
+            limit: Infinity,
+            remaining: Infinity
+          };
+
+          return {
+            allowed: true,
+            message: 'Action allowed (free trial)',
+            usage: trialUsage,
+            currentPlan: 'free_trial',
+            isExpired: false,
+            isFreeTrial: true
+          };
+        }
+      }
+
       // Get effective plan (considers expiry)
       const effectivePlan = user.getEffectivePlan();
 
@@ -85,6 +157,68 @@ class SubscriptionService {
 
       // Check if user needs daily/monthly reset
       await this.checkAndResetCounters(user);
+
+      // Check if user is in active free trial - they get unlimited access
+      const isInActiveFreeTrial = user.subscription.freeTrial?.isActive &&
+        user.subscription.freeTrial?.endDate &&
+        new Date() <= new Date(user.subscription.freeTrial.endDate);
+
+      if (isInActiveFreeTrial) {
+        // Free trial users get 1 supervisor, unlimited other features
+        if (actionType === 'supervisor') {
+          // For supervisors, check actual count and limit to 1
+          const Supervisor = require('../models/Supervisor');
+          const actualSupervisorCount = await Supervisor.countDocuments({
+            user: userId,
+            isActive: true
+          });
+
+          const usage = {
+            used: actualSupervisorCount,
+            limit: 1,
+            remaining: Math.max(0, 1 - actualSupervisorCount)
+          };
+
+          const canPerform = actualSupervisorCount < 1;
+
+          if (!canPerform) {
+            return {
+              allowed: false,
+              message: 'لقد وصلت إلى الحد الأقصى للمشرفين في التجربة المجانية (1 مشرف). قم بالترقية لإضافة المزيد.',
+              usage,
+              currentPlan: 'free_trial',
+              isExpired: false,
+              isFreeTrial: true
+            };
+          }
+
+          return {
+            allowed: true,
+            message: 'Action allowed (free trial)',
+            usage,
+            currentPlan: 'free_trial',
+            isExpired: false,
+            isFreeTrial: true
+          };
+        } else {
+          // For other actions, unlimited access
+          const usage = user.getRemainingUsage(actionType);
+          const trialUsage = {
+            used: usage.used || 0,
+            limit: Infinity,
+            remaining: Infinity
+          };
+
+          return {
+            allowed: true,
+            message: 'Action allowed (free trial)',
+            usage: trialUsage,
+            currentPlan: 'free_trial',
+            isExpired: false,
+            isFreeTrial: true
+          };
+        }
+      }
 
       // Get effective plan (considers expiry)
       const effectivePlan = user.getEffectivePlan();
@@ -298,22 +432,49 @@ class SubscriptionService {
         remaining: limits.supervisors === Infinity ? Infinity : Math.max(0, limits.supervisors - actualSupervisorCount)
       };
 
+      // Check if user is in active free trial
+      const isInActiveFreeTrial = user.subscription.freeTrial?.isActive &&
+        user.subscription.freeTrial?.endDate &&
+        new Date() <= new Date(user.subscription.freeTrial.endDate);
+
+      // If in free trial, override limits (1 supervisor, unlimited other features)
+      const effectiveLimits = isInActiveFreeTrial ? {
+        voiceInputsPerDay: Infinity,
+        expensesPerDay: Infinity,
+        revenuesPerMonth: Infinity,
+        supervisors: 1, // Free trial users get 1 supervisor
+        projects: Infinity,
+        partners: Infinity
+      } : limits;
+
+      // Get usage stats
+      const voiceInputUsage = user.getRemainingUsage('voiceInput');
+      const expenseUsage = user.getRemainingUsage('expense');
+      const revenueUsage = user.getRemainingUsage('revenue');
+      const projectUsage = user.getRemainingUsage('project');
+      const partnerUsage = user.getRemainingUsage('partner');
+
+      // Override usage with Infinity for trial users
+      const usage = {
+        voiceInputs: isInActiveFreeTrial ? { ...voiceInputUsage, limit: Infinity, remaining: Infinity } : voiceInputUsage,
+        expenses: isInActiveFreeTrial ? { ...expenseUsage, limit: Infinity, remaining: Infinity } : expenseUsage,
+        revenues: isInActiveFreeTrial ? { ...revenueUsage, limit: Infinity, remaining: Infinity } : revenueUsage,
+        supervisors: isInActiveFreeTrial ? { ...supervisorUsage, limit: 1, remaining: Math.max(0, 1 - supervisorUsage.used) } : supervisorUsage,
+        projects: isInActiveFreeTrial ? { ...projectUsage, limit: Infinity, remaining: Infinity } : projectUsage,
+        partners: isInActiveFreeTrial ? { ...partnerUsage, limit: Infinity, remaining: Infinity } : partnerUsage
+      };
+
       return {
-        plan: effectivePlan,
+        plan: isInActiveFreeTrial ? 'free_trial' : effectivePlan,
         originalPlan: user.subscription.plan,
-        limits,
-        usage: {
-          voiceInputs: user.getRemainingUsage('voiceInput'),
-          expenses: user.getRemainingUsage('expense'),
-          revenues: user.getRemainingUsage('revenue'),
-          supervisors: supervisorUsage,
-          projects: user.getRemainingUsage('project'),
-          partners: user.getRemainingUsage('partner')
-        },
+        limits: effectiveLimits,
+        usage,
         subscription: {
           ...user.getSubscriptionInfo(),
           isExpired: user.isSubscriptionExpired,
-          effectivePlan: effectivePlan
+          effectivePlan: isInActiveFreeTrial ? 'free_trial' : effectivePlan,
+          isInFreeTrial: isInActiveFreeTrial,
+          freeTrial: user.subscription.freeTrial
         }
       };
     } catch (error) {
