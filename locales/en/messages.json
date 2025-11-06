@@ -1,0 +1,61 @@
+{
+  "auth": {
+    "registered_successfully": "Registered successfully. Please check your email to verify your account.",
+    "login_successful": "Login successful",
+    "email_verified": "Email verified successfully. You can now login.",
+    "invalid_credentials": "Invalid email or password",
+    "email_not_verified": "Please verify your email first",
+    "user_not_found": "User not found",
+    "establishment_not_found": "Establishment not found",
+    "invalid_token": "Invalid or expired token",
+    "password_reset_sent": "Password reset link sent to your email",
+    "password_reset_success": "Password reset successfully",
+    "activation_link_sent": "Activation link sent to your email",
+    "email_already_exists": "Email already exists",
+    "phone_already_exists": "Phone number already exists",
+    "unauthorized": "Unauthorized access",
+    "email_already_verified": "Email is already verified"
+  },
+  "receipt": {
+    "created_successfully": "Receipt created successfully",
+    "not_found": "Receipt with this ID does not exist",
+    "already_claimed": "You have already received points for this receipt",
+    "points_added": "Points added successfully",
+    "invalid_establishment": "Invalid establishment",
+    "already_exists": "Receipt with this ID already exists"
+  },
+  "points": {
+    "deducted_successfully": "Points deducted successfully",
+    "insufficient_points": "Insufficient points",
+    "claimed_successfully": "Points claimed successfully"
+  },
+  "validation": {
+    "required_field": "{{field}} is required",
+    "invalid_email": "Invalid email format",
+    "invalid_phone": "Invalid phone number",
+    "password_min_length": "Password must be at least 6 characters",
+    "invalid_request": "Invalid request"
+  },
+  "server": {
+    "error": "An error occurred. Please try again later",
+    "success": "Operation completed successfully"
+  },
+  "common": {
+    "no_file": "No file uploaded",
+    "not_found": "Resource not found"
+  },
+  "establishment": {
+    "logo_uploaded": "Logo uploaded successfully",
+    "logo_deleted": "Logo deleted successfully"
+  },
+  "item": {
+    "created_successfully": "Item created successfully",
+    "updated_successfully": "Item updated successfully",
+    "deleted_successfully": "Item deleted successfully",
+    "not_found": "Item not found",
+    "already_exists": "Item with this name already exists"
+  },
+  "user": {
+    "not_found": "User not found"
+  }
+}
