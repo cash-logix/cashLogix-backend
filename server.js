@@ -142,7 +142,7 @@ app.get('/health', (req, res) => {
   res.status(200).json({
     status: 'OK',
     message: 'Cash Logix API is running',
-    arabic: 'واجهة برمجة تطبيقات كاش لوجيكس تعمل بشكل طبيعي',
+    arabic: 'واجهة برمجة تطبيقات Cash Logix تعمل بشكل طبيعي',
     timestamp: new Date().toISOString(),
     environment: process.env.NODE_ENV || 'development'
   });

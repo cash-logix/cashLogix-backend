@@ -158,7 +158,7 @@ The application includes a health check endpoint at `/health` that returns:
 {
   "status": "OK",
   "message": "Cash Logix API is running",
-  "arabic": "واجهة برمجة تطبيقات كاش لوجيكس تعمل بشكل طبيعي",
+  "arabic": "واجهة برمجة تطبيقات Cash Logix تعمل بشكل طبيعي",
   "timestamp": "2024-01-01T00:00:00.000Z",
   "environment": "production"
 }
