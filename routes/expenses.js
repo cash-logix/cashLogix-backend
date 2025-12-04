@@ -11,6 +11,8 @@ const {
   checkApprovalPermission
 } = require('../middleware/auth');
 const { checkSubscriptionLimit } = require('../middleware/subscription');
+const { cacheService, CACHE_TTL } = require('../utils/cache');
+const logger = require('../utils/logger');
 
 const router = express.Router();
 
@@ -20,7 +22,7 @@ const router = express.Router();
 router.get('/', protect, checkViewPermission, async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 20;
+    const limit = Math.min(parseInt(req.query.limit) || 20, 100); // Cap at 100
     const skip = (page - 1) * limit;
 
     // Build query - supervisors can view expenses for the user they're supervising
@@ -71,16 +73,38 @@ router.get('/', protect, checkViewPermission, async (req, res) => {
       ];
     }
 
-    const expenses = await Expense.find(query)
-      .populate('project', 'name')
-      .populate('company', 'name')
-      .sort({ date: -1 })
-      .skip(skip)
-      .limit(limit);
+    // Generate cache key for this query
+    const cacheKey = cacheService.generateKey('expenses', {
+      userId: userId.toString(),
+      page,
+      limit,
+      ...req.query
+    });
 
-    const total = await Expense.countDocuments(query);
+    // Try to get from cache (only for non-search queries)
+    if (!req.query.search) {
+      const cached = cacheService.get(cacheKey);
+      if (cached) {
+        logger.cache(cacheKey, true);
+        return res.json(cached);
+      }
+      logger.cache(cacheKey, false);
+    }
 
-    res.json({
+    // Use Promise.all for parallel execution of query and count
+    const [expenses, total] = await Promise.all([
+      Expense.find(query)
+        .select('-aiProcessing.originalText -notes -location.coordinates') // Exclude heavy fields
+        .populate('project', 'name')
+        .populate('company', 'name')
+        .sort({ date: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean(), // Use lean() for better performance
+      Expense.countDocuments(query)
+    ]);
+
+    const response = {
       success: true,
       data: {
         expenses,
@@ -90,9 +114,16 @@ router.get('/', protect, checkViewPermission, async (req, res) => {
           total
         }
       }
-    });
+    };
+
+    // Cache the response (only for non-search queries)
+    if (!req.query.search) {
+      cacheService.set(cacheKey, response, CACHE_TTL.SHORT);
+    }
+
+    res.json(response);
   } catch (error) {
-    console.error('Get expenses error:', error);
+    logger.error('Get expenses error:', { error: error.message });
     res.status(500).json({
       success: false,
       error: {
@@ -187,7 +218,7 @@ router.get('/categories', protect, checkViewPermission, async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Get categories error:', error);
+    logger.error('Get categories error:', { error: error.message });
     res.status(500).json({
       success: false,
       error: {
@@ -327,7 +358,7 @@ router.get('/analytics', protect, checkViewPermission, async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Get analytics error:', error);
+    logger.error('Get analytics error:', { error: error.message });
     res.status(500).json({
       success: false,
       error: {
@@ -379,7 +410,7 @@ router.get('/:id', protect, checkViewPermission, async (req, res) => {
       data: { expense }
     });
   } catch (error) {
-    console.error('Get expense error:', error);
+    logger.error('Get expense error:', { error: error.message });
     res.status(500).json({
       success: false,
       error: {
@@ -541,6 +572,9 @@ router.post('/', protect, checkSubscriptionLimit('expense'), checkCreatePermissi
       responseData.approval = approval;
     }
 
+    // Invalidate user's expense cache
+    cacheService.invalidateUser(req.user.id, 'expenses');
+
     res.status(201).json({
       success: true,
       message: approval ?
@@ -552,7 +586,7 @@ router.post('/', protect, checkSubscriptionLimit('expense'), checkCreatePermissi
       data: responseData
     });
   } catch (error) {
-    console.error('Create expense error:', error);
+    logger.error('Create expense error:', { error: error.message });
     res.status(500).json({
       success: false,
       error: {
@@ -681,6 +715,9 @@ router.put('/:id', protect, checkEditPermission, [
       }
     }
 
+    // Invalidate user's expense cache
+    cacheService.invalidateUser(req.user.id, 'expenses');
+
     res.json({
       success: true,
       message: 'Expense updated successfully',
@@ -688,7 +725,7 @@ router.put('/:id', protect, checkEditPermission, [
       data: { expense: updatedExpense }
     });
   } catch (error) {
-    console.error('Update expense error:', error);
+    logger.error('Update expense error:', { error: error.message });
     res.status(500).json({
       success: false,
       error: {
@@ -746,13 +783,16 @@ router.delete('/:id', protect, checkDeletePermission, async (req, res) => {
     expense.status = 'deleted';
     await expense.save();
 
+    // Invalidate user's expense cache
+    cacheService.invalidateUser(req.user.id, 'expenses');
+
     res.json({
       success: true,
       message: 'Expense deleted successfully',
       arabic: 'تم حذف المصروف بنجاح'
     });
   } catch (error) {
-    console.error('Delete expense error:', error);
+    logger.error('Delete expense error:', { error: error.message });
     res.status(500).json({
       success: false,
       error: {
@@ -845,7 +885,7 @@ router.get('/stats/summary', protect, checkViewPermission, async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Get expense stats error:', error);
+    logger.error('Get expense stats error:', { error: error.message });
     res.status(500).json({
       success: false,
       error: {
@@ -901,7 +941,7 @@ router.put('/:id/approve', protect, checkApprovalPermission, [
       data: { expense }
     });
   } catch (error) {
-    console.error('Approve expense error:', error);
+    logger.error('Approve expense error:', { error: error.message });
     res.status(500).json({
       success: false,
       error: {
@@ -956,7 +996,7 @@ router.put('/:id/reject', protect, checkApprovalPermission, [
       data: { expense }
     });
   } catch (error) {
-    console.error('Reject expense error:', error);
+    logger.error('Reject expense error:', { error: error.message });
     res.status(500).json({
       success: false,
       error: {
@@ -1083,7 +1123,7 @@ router.post('/bulk', protect, checkCreatePermission, [
       }
     });
   } catch (error) {
-    console.error('Bulk operation error:', error);
+    logger.error('Bulk operation error:', { error: error.message });
     res.status(500).json({
       success: false,
       error: {

@@ -10,6 +10,8 @@ const {
   checkDeletePermission
 } = require('../middleware/auth');
 const { checkSubscriptionLimit } = require('../middleware/subscription');
+const { cacheService, CACHE_TTL } = require('../utils/cache');
+const logger = require('../utils/logger');
 
 const router = express.Router();
 
@@ -19,7 +21,7 @@ const router = express.Router();
 router.get('/', protect, checkViewPermission, async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 20;
+    const limit = Math.min(parseInt(req.query.limit) || 20, 100); // Cap at 100
     const skip = (page - 1) * limit;
 
     // Build query - supervisors can view revenues for the user they're supervising
@@ -52,16 +54,36 @@ router.get('/', protect, checkViewPermission, async (req, res) => {
       }
     }
 
-    const revenues = await Revenue.find(query)
-      .populate('project', 'name')
-      .populate('company', 'name')
-      .sort({ date: -1 })
-      .skip(skip)
-      .limit(limit);
+    // Generate cache key
+    const cacheKey = cacheService.generateKey('revenues', {
+      userId: userId.toString(),
+      page,
+      limit,
+      ...req.query
+    });
 
-    const total = await Revenue.countDocuments(query);
+    // Try to get from cache
+    const cached = cacheService.get(cacheKey);
+    if (cached) {
+      logger.cache(cacheKey, true);
+      return res.json(cached);
+    }
+    logger.cache(cacheKey, false);
 
-    res.json({
+    // Use Promise.all for parallel execution
+    const [revenues, total] = await Promise.all([
+      Revenue.find(query)
+        .select('-aiProcessing.originalText -notes')
+        .populate('project', 'name')
+        .populate('company', 'name')
+        .sort({ date: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean(),
+      Revenue.countDocuments(query)
+    ]);
+
+    const response = {
       success: true,
       data: {
         revenues,
@@ -71,9 +93,14 @@ router.get('/', protect, checkViewPermission, async (req, res) => {
           total
         }
       }
-    });
+    };
+
+    // Cache the response
+    cacheService.set(cacheKey, response, CACHE_TTL.SHORT);
+
+    res.json(response);
   } catch (error) {
-    console.error('Get revenues error:', error);
+    logger.error('Get revenues error:', { error: error.message });
     res.status(500).json({
       success: false,
       error: {
@@ -245,6 +272,9 @@ router.post('/', protect, checkSubscriptionLimit('revenue'), checkCreatePermissi
       { path: 'company', select: 'name' }
     ]);
 
+    // Invalidate user's revenue cache
+    cacheService.invalidateUser(req.user.id, 'revenues');
+
     res.status(201).json({
       success: true,
       message: 'Revenue created successfully',
@@ -252,7 +282,7 @@ router.post('/', protect, checkSubscriptionLimit('revenue'), checkCreatePermissi
       data: { revenue }
     });
   } catch (error) {
-    console.error('Create revenue error:', error);
+    logger.error('Create revenue error:', { error: error.message });
     res.status(500).json({
       success: false,
       error: {
@@ -298,7 +328,7 @@ router.get('/stats/summary', protect, checkViewPermission, async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Get revenue stats error:', error);
+    logger.error('Get revenue stats error:', { error: error.message });
     res.status(500).json({
       success: false,
       error: {
@@ -350,7 +380,7 @@ router.get('/:id', protect, checkViewPermission, async (req, res) => {
       data: { revenue }
     });
   } catch (error) {
-    console.error('Get revenue error:', error);
+    logger.error('Get revenue error:', { error: error.message });
     res.status(500).json({
       success: false,
       error: {
@@ -489,6 +519,9 @@ router.put('/:id', protect, checkEditPermission, [
       }
     }
 
+    // Invalidate user's revenue cache
+    cacheService.invalidateUser(req.user.id, 'revenues');
+
     res.json({
       success: true,
       message: 'Revenue updated successfully',
@@ -496,7 +529,7 @@ router.put('/:id', protect, checkEditPermission, [
       data: { revenue: updatedRevenue }
     });
   } catch (error) {
-    console.error('Update revenue error:', error);
+    logger.error('Update revenue error:', { error: error.message });
     res.status(500).json({
       success: false,
       error: {
@@ -553,13 +586,16 @@ router.delete('/:id', protect, checkDeletePermission, async (req, res) => {
     revenue.status = 'deleted';
     await revenue.save();
 
+    // Invalidate user's revenue cache
+    cacheService.invalidateUser(req.user.id, 'revenues');
+
     res.json({
       success: true,
       message: 'Revenue deleted successfully',
       arabic: 'تم حذف الإيراد بنجاح'
     });
   } catch (error) {
-    console.error('Delete revenue error:', error);
+    logger.error('Delete revenue error:', { error: error.message });
     res.status(500).json({
       success: false,
       error: {
@@ -624,7 +660,7 @@ router.get('/categories', protect, checkViewPermission, async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Get revenue categories error:', error);
+    logger.error('Get revenue categories error:', { error: error.message });
     res.status(500).json({
       success: false,
       error: {
@@ -785,7 +821,7 @@ router.get('/analytics', protect, checkViewPermission, async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Get revenue analytics error:', error);
+    logger.error('Get revenue analytics error:', { error: error.message });
     res.status(500).json({
       success: false,
       error: {
@@ -865,7 +901,7 @@ router.put('/:id/payment-status', protect, checkEditPermission, [
       data: { revenue }
     });
   } catch (error) {
-    console.error('Update payment status error:', error);
+    logger.error('Update payment status error:', { error: error.message });
     res.status(500).json({
       success: false,
       error: {
@@ -905,7 +941,7 @@ router.get('/overdue', protect, checkViewPermission, async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Get overdue revenues error:', error);
+    logger.error('Get overdue revenues error:', { error: error.message });
     res.status(500).json({
       success: false,
       error: {

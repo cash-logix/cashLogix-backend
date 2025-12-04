@@ -9,6 +9,10 @@ const path = require('path');
 const cron = require('node-cron');
 require('dotenv').config();
 
+// Import utilities
+const logger = require('./utils/logger');
+const { cacheService } = require('./utils/cache');
+
 // Import routes
 const authRoutes = require('./routes/auth');
 const userRoutes = require('./routes/users');
@@ -130,11 +134,14 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads'), {
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Logging middleware
+// Logging middleware - minimal in production
 if (process.env.NODE_ENV === 'development') {
   app.use(morgan('dev'));
 } else {
-  app.use(morgan('combined'));
+  // Only log errors and slow requests in production
+  app.use(morgan('combined', {
+    skip: (req, res) => res.statusCode < 400
+  }));
 }
 
 // Health check endpoint
@@ -172,16 +179,18 @@ app.use(errorHandler);
 
 // Graceful shutdown
 process.on('SIGINT', async () => {
-  console.log('\n🛑 Received SIGINT. Graceful shutdown...');
+  logger.info('Received SIGINT. Graceful shutdown...');
+  cacheService.destroy();
   await mongoose.connection.close();
-  console.log('📦 Database connection closed.');
+  logger.info('Database connection closed.');
   process.exit(0);
 });
 
 process.on('SIGTERM', async () => {
-  console.log('\n🛑 Received SIGTERM. Graceful shutdown...');
+  logger.info('Received SIGTERM. Graceful shutdown...');
+  cacheService.destroy();
   await mongoose.connection.close();
-  console.log('📦 Database connection closed.');
+  logger.info('Database connection closed.');
   process.exit(0);
 });
 
