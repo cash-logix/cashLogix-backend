@@ -2,6 +2,15 @@ const nodemailer = require('nodemailer');
 const fs = require('fs').promises;
 const path = require('path');
 
+// ============================================
+// EMAIL PROVIDER CONFIGURATION
+// ============================================
+// Change this variable to switch between email providers:
+// 'gmail' - Use Gmail SMTP (smtp.gmail.com)
+// 'private' - Use Private Email (mail.privateemail.com)
+const EMAIL_PROVIDER = process.env.EMAIL_PROVIDER || 'gmail'; // Default to Gmail
+// ============================================
+
 // Simple in-memory email queue for failed emails
 let emailQueue = [];
 let isProcessingQueue = false; // Flag to prevent concurrent processing
@@ -57,7 +66,7 @@ const processEmailQueue = async () => {
     console.log(`Processing ${emailQueue.length} emails from queue`);
 
     // Create transporter once for all emails to avoid multiple log messages
-    const transporter = createGmailTransport();
+    const transporter = createEmailTransport();
 
     for (let i = emailQueue.length - 1; i >= 0; i--) {
       const emailItem = emailQueue[i];
@@ -94,91 +103,141 @@ loadEmailQueue();
 // Process queue every 1 minute (faster processing)
 setInterval(processEmailQueue, 1 * 60 * 1000);
 
-// Gmail SMTP configurations optimized for fast failure detection
-const createGmailTransport = () => {
-  // Ultra-fast failure detection for Railway
-  const configs = [
-    // Configuration 1: Gmail SMTP with ultra-fast timeouts
-    {
-      host: 'mail.privateemail.com',
-      port: 587,
-      secure: false, // Use STARTTLS
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS
+// Email transport configurations optimized for fast failure detection
+const createEmailTransport = () => {
+  const provider = EMAIL_PROVIDER.toLowerCase();
+
+  let configs = [];
+
+  if (provider === 'gmail') {
+    // Gmail SMTP configurations
+    configs = [
+      // Configuration 1: Gmail SMTP with STARTTLS (recommended)
+      {
+        host: 'smtp.gmail.com',
+        port: 587,
+        secure: false, // Use STARTTLS
+        auth: {
+          user: process.env.EMAIL_USER,
+          pass: process.env.EMAIL_PASSWORD || process.env.EMAIL_PASS
+        },
+        connectionTimeout: 3000,
+        greetingTimeout: 2000,
+        socketTimeout: 5000,
+        pool: false,
+        maxConnections: 1,
+        maxMessages: 1,
+        tls: {
+          rejectUnauthorized: false
+        }
       },
-      connectionTimeout: 3000,  // 3 seconds (was 15)
-      greetingTimeout: 2000,    // 2 seconds (was 5)
-      socketTimeout: 5000,      // 5 seconds (was 15)
-      pool: false,              // Disable pooling
-      maxConnections: 1,        // Single connection
-      maxMessages: 1,           // One message per connection
-      tls: {
-        rejectUnauthorized: false,
-        ciphers: 'SSLv3'
-      }
-    },
-    // Configuration 2: Gmail SMTP with SSL (ultra-fast)
-    {
-      host: 'mail.privateemail.com',
-      port: 465,
-      secure: true, // Use SSL
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS
+      // Configuration 2: Gmail SMTP with SSL
+      {
+        host: 'smtp.gmail.com',
+        port: 465,
+        secure: true, // Use SSL
+        auth: {
+          user: process.env.EMAIL_USER,
+          pass: process.env.EMAIL_PASSWORD || process.env.EMAIL_PASS
+        },
+        connectionTimeout: 3000,
+        greetingTimeout: 2000,
+        socketTimeout: 5000,
+        pool: false,
+        maxConnections: 1,
+        maxMessages: 1,
+        tls: {
+          rejectUnauthorized: false
+        }
       },
-      connectionTimeout: 3000,  // 3 seconds
-      greetingTimeout: 2000,    // 2 seconds
-      socketTimeout: 5000,      // 5 seconds
-      pool: false,
-      maxConnections: 1,
-      maxMessages: 1,
-      tls: {
-        rejectUnauthorized: false,
-        ciphers: 'SSLv3'
+      // Configuration 3: Gmail service (fallback)
+      {
+        service: 'gmail',
+        auth: {
+          user: process.env.EMAIL_USER,
+          pass: process.env.EMAIL_PASSWORD || process.env.EMAIL_PASS
+        },
+        connectionTimeout: 3000,
+        greetingTimeout: 2000,
+        socketTimeout: 5000,
+        pool: false,
+        maxConnections: 1,
+        maxMessages: 1,
+        tls: {
+          rejectUnauthorized: false
+        }
       }
-    },
-    // Configuration 3: Gmail service (ultra-fast)
-    {
-      service: 'gmail',
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS
+    ];
+  } else if (provider === 'private') {
+    // Private Email configurations
+    configs = [
+      // Configuration 1: Private Email SMTP with STARTTLS
+      {
+        host: 'mail.privateemail.com',
+        port: 587,
+        secure: false, // Use STARTTLS
+        auth: {
+          user: process.env.EMAIL_USER,
+          pass: process.env.EMAIL_PASSWORD || process.env.EMAIL_PASS
+        },
+        connectionTimeout: 3000,
+        greetingTimeout: 2000,
+        socketTimeout: 5000,
+        pool: false,
+        maxConnections: 1,
+        maxMessages: 1,
+        tls: {
+          rejectUnauthorized: false,
+          ciphers: 'SSLv3'
+        }
       },
-      connectionTimeout: 3000,  // 3 seconds
-      greetingTimeout: 2000,    // 2 seconds
-      socketTimeout: 5000,      // 5 seconds
-      pool: false,
-      maxConnections: 1,
-      maxMessages: 1,
-      tls: {
-        rejectUnauthorized: false
+      // Configuration 2: Private Email SMTP with SSL
+      {
+        host: 'mail.privateemail.com',
+        port: 465,
+        secure: true, // Use SSL
+        auth: {
+          user: process.env.EMAIL_USER,
+          pass: process.env.EMAIL_PASSWORD || process.env.EMAIL_PASS
+        },
+        connectionTimeout: 3000,
+        greetingTimeout: 2000,
+        socketTimeout: 5000,
+        pool: false,
+        maxConnections: 1,
+        maxMessages: 1,
+        tls: {
+          rejectUnauthorized: false,
+          ciphers: 'SSLv3'
+        }
       }
-    }
-  ];
+    ];
+  } else {
+    throw new Error(`Unknown email provider: ${EMAIL_PROVIDER}. Use 'gmail' or 'private'.`);
+  }
 
   // Try configurations in order
   for (let i = 0; i < configs.length; i++) {
     try {
       const transporter = nodemailer.createTransport(configs[i]);
-      // Don't log on every transporter creation - only log errors
+      console.log(`Using ${provider.toUpperCase()} email provider (config ${i + 1})`);
       return transporter;
     } catch (error) {
       // Only log error if this is the last config attempt
       if (i === configs.length - 1) {
-        console.error(`All Gmail configurations failed. Last error: ${error.message}`);
+        console.error(`All ${provider.toUpperCase()} configurations failed. Last error: ${error.message}`);
         throw error;
       }
     }
   }
 };
 
-// Send email with Gmail SMTP optimized for fast failure
+// Send email with email provider optimized for fast failure
 const sendEmailWithFallback = async (mailOptions, retryCount = 0) => {
   const maxRetries = 1; // Reduced from 3 to 1
 
   try {
-    const transporter = createGmailTransport();
+    const transporter = createEmailTransport();
 
     // Skip connection test in production to avoid timeouts
     const isProduction = process.env.NODE_ENV === 'production';
@@ -190,9 +249,9 @@ const sendEmailWithFallback = async (mailOptions, retryCount = 0) => {
 
       try {
         await Promise.race([transporter.verify(), timeoutPromise]);
-        console.log('Gmail connection verified successfully');
+        console.log(`${EMAIL_PROVIDER.toUpperCase()} connection verified successfully`);
       } catch (verifyError) {
-        console.log('Gmail connection verification skipped:', verifyError.message);
+        console.log(`${EMAIL_PROVIDER.toUpperCase()} connection verification skipped:`, verifyError.message);
         // Continue anyway - sometimes verification fails but sending works
       }
     }
@@ -217,10 +276,10 @@ const sendEmailWithFallback = async (mailOptions, retryCount = 0) => {
   }
 };
 
-// Test Gmail connection
-const testGmailConnection = async () => {
+// Test email connection
+const testEmailConnection = async () => {
   try {
-    const transporter = createGmailTransport();
+    const transporter = createEmailTransport();
 
     // Quick connection test
     const timeoutPromise = new Promise((_, reject) => {
@@ -228,40 +287,47 @@ const testGmailConnection = async () => {
     });
 
     await Promise.race([transporter.verify(), timeoutPromise]);
-    console.log('Gmail connection test successful');
+    console.log(`${EMAIL_PROVIDER.toUpperCase()} connection test successful`);
     return true;
 
   } catch (error) {
-    console.error('Gmail connection test failed:', error.message);
+    console.error(`${EMAIL_PROVIDER.toUpperCase()} connection test failed:`, error.message);
     return false;
   }
 };
 
-// Get Gmail account info
-const getGmailAccountInfo = async () => {
+// Get email account info
+const getEmailAccountInfo = async () => {
   try {
-    console.log('Gmail Account Info:', {
+    console.log(`${EMAIL_PROVIDER.toUpperCase()} Account Info:`, {
+      provider: EMAIL_PROVIDER,
       email: process.env.EMAIL_USER,
-      hasPassword: !!process.env.EMAIL_PASS
+      hasPassword: !!process.env.EMAIL_PASSWORD || process.env.EMAIL_PASS
     });
 
     return {
+      provider: EMAIL_PROVIDER,
       email: process.env.EMAIL_USER,
-      hasPassword: !!process.env.EMAIL_PASS
+      hasPassword: !!process.env.EMAIL_PASSWORD || process.env.EMAIL_PASS
     };
 
   } catch (error) {
-    console.error('Error getting Gmail account info:', error.message);
+    console.error(`Error getting ${EMAIL_PROVIDER.toUpperCase()} account info:`, error.message);
     return null;
   }
 };
 
 module.exports = {
-  createGmailTransport,
+  // New function names
+  createEmailTransport,
   sendEmailWithFallback,
   addToQueue,
   processEmailQueue,
   loadEmailQueue,
-  testGmailConnection,
-  getGmailAccountInfo
+  testEmailConnection,
+  getEmailAccountInfo,
+  // Backward compatibility (deprecated - use new names)
+  createGmailTransport: createEmailTransport,
+  testGmailConnection: testEmailConnection,
+  getGmailAccountInfo: getEmailAccountInfo
 };
