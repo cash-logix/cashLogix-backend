@@ -1,29 +1,13 @@
 const express = require('express');
 const { body, validationResult } = require('express-validator');
 const multer = require('multer');
-const path = require('path');
-const fs = require('fs');
 const SubscriptionRequest = require('../models/SubscriptionRequest');
 const SubscriptionService = require('../services/subscriptionService');
 const { protect } = require('../middleware/auth');
 const { sendEmailWithFallback } = require('../services/emailService');
+const { storage } = require('../config/cloudinary');
 
 const router = express.Router();
-
-// Configure multer for file uploads
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    const uploadDir = 'uploads/subscription-screenshots';
-    if (!fs.existsSync(uploadDir)) {
-      fs.mkdirSync(uploadDir, { recursive: true });
-    }
-    cb(null, uploadDir);
-  },
-  filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, `subscription-${req.user.id}-${uniqueSuffix}${path.extname(file.originalname)}`);
-  }
-});
 
 const fileFilter = (req, file, cb) => {
   // Accept images only
@@ -143,9 +127,15 @@ router.post('/', protect, upload.single('transactionScreenshot'), [
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
-      // Delete uploaded file if validation fails
-      if (req.file) {
-        fs.unlinkSync(req.file.path);
+      // Delete uploaded file from Cloudinary if validation fails
+      if (req.file && req.file.filename) {
+        try {
+          const { cloudinary } = require('../config/cloudinary');
+          // req.file.filename contains the public_id for deletion
+          await cloudinary.uploader.destroy(req.file.filename);
+        } catch (deleteError) {
+          console.error('Error deleting file from Cloudinary:', deleteError);
+        }
       }
       return res.status(400).json({
         success: false,
@@ -166,6 +156,13 @@ router.post('/', protect, upload.single('transactionScreenshot'), [
     // Determine payment info type
     const paymentInfoType = paymentMethod === 'vodafone_cash' ? 'phone' : 'username';
 
+    // Get Cloudinary URL if file was uploaded
+    // multer-storage-cloudinary stores the secure URL in req.file.path
+    let screenshotUrl = null;
+    if (req.file) {
+      screenshotUrl = req.file.path || req.file.secure_url || req.file.url;
+    }
+
     // Create subscription request
     const subscriptionRequest = await SubscriptionRequest.create({
       user: req.user.id,
@@ -176,7 +173,7 @@ router.post('/', protect, upload.single('transactionScreenshot'), [
         value: paymentInfo.value.trim(),
         type: paymentInfoType
       },
-      transactionScreenshot: req.file ? `/uploads/subscription-screenshots/${req.file.filename}` : null,
+      transactionScreenshot: screenshotUrl,
       amount: totalPrice,
       status: 'pending'
     });
@@ -196,8 +193,14 @@ router.post('/', protect, upload.single('transactionScreenshot'), [
       };
       const paymentMethodName = paymentMethodNames[paymentMethod] || paymentMethod;
 
-      const screenshotUrl = req.file
-        ? `${process.env.BACKEND_URL || process.env.FRONTEND_URL || 'http://localhost:5000'}${subscriptionRequest.transactionScreenshot}`
+      const screenshotUrl = subscriptionRequest.transactionScreenshot;
+
+      // Determine if it's a Cloudinary URL or local path
+      const isCloudinaryUrl = screenshotUrl && (screenshotUrl.startsWith('http://') || screenshotUrl.startsWith('https://'));
+      const fullScreenshotUrl = screenshotUrl
+        ? (isCloudinaryUrl
+          ? screenshotUrl
+          : `${process.env.BACKEND_URL || process.env.FRONTEND_URL || 'http://localhost:5000'}${screenshotUrl.startsWith('/') ? screenshotUrl : '/' + screenshotUrl}`)
         : null;
 
       const mailOptions = {
@@ -220,7 +223,17 @@ router.post('/', protect, upload.single('transactionScreenshot'), [
               <p><strong>المبلغ الإجمالي:</strong> ${totalPrice} ج.م</p>
               <p><strong>طريقة الدفع:</strong> ${paymentMethodName}</p>
               <p><strong>معلومات الدفع:</strong> ${paymentInfo.value} (${paymentInfoType === 'phone' ? 'رقم الهاتف' : 'اسم المستخدم'})</p>
-              ${screenshotUrl ? `<p><strong>صورة الإيصال:</strong> <a href="${screenshotUrl}">${screenshotUrl}</a></p>` : '<p><strong>صورة الإيصال:</strong> غير متوفرة</p>'}
+              ${fullScreenshotUrl
+            ? `<div style="margin: 15px 0;">
+                    <p style="margin-bottom: 10px;"><strong>صورة الإيصال:</strong></p>
+                    <a href="${fullScreenshotUrl}" target="_blank" style="display: inline-block; margin-bottom: 10px;">
+                      <img src="${fullScreenshotUrl}" alt="صورة الإيصال" style="max-width: 100%; max-height: 400px; border: 2px solid #ddd; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);" />
+                    </a>
+                    <p style="margin-top: 10px; font-size: 12px; color: #666;">
+                      <a href="${fullScreenshotUrl}" target="_blank" style="color: #2563eb; text-decoration: none;">افتح الصورة في نافذة جديدة</a>
+                    </p>
+                  </div>`
+            : '<p><strong>صورة الإيصال:</strong> غير متوفرة</p>'}
               <p><strong>الحالة:</strong> ${subscriptionRequest.status === 'pending' ? 'قيد المراجعة' : subscriptionRequest.status}</p>
               <p><strong>تاريخ الطلب:</strong> ${new Date(subscriptionRequest.createdAt).toLocaleString('ar-EG')}</p>
             </div>
@@ -244,9 +257,15 @@ router.post('/', protect, upload.single('transactionScreenshot'), [
       data: { subscriptionRequest }
     });
   } catch (error) {
-    // Delete uploaded file if error occurs
-    if (req.file) {
-      fs.unlinkSync(req.file.path);
+    // Delete uploaded file from Cloudinary if error occurs
+    if (req.file && req.file.filename) {
+      try {
+        const { cloudinary } = require('../config/cloudinary');
+        // req.file.filename contains the public_id for deletion
+        await cloudinary.uploader.destroy(req.file.filename);
+      } catch (deleteError) {
+        console.error('Error deleting file from Cloudinary:', deleteError);
+      }
     }
     console.error('Create subscription request error:', error);
     res.status(500).json({

@@ -3,6 +3,8 @@ const { body, validationResult } = require('express-validator');
 const User = require('../models/User');
 const SubscriptionRequest = require('../models/SubscriptionRequest');
 const { protect, isAdmin } = require('../middleware/auth');
+const { sendEmailWithFallback } = require('../services/emailService');
+const SubscriptionService = require('../services/subscriptionService');
 
 const router = express.Router();
 
@@ -304,6 +306,57 @@ router.put('/subscription-requests/:id/approve', protect, isAdmin, [
     await request.populate('user', 'firstName lastName email');
     await request.populate('processedBy', 'firstName lastName email');
 
+    // Send email notification to user
+    try {
+      const planPricing = SubscriptionService.getPlanPricing();
+      const planInfo = planPricing[request.plan];
+      const planName = planInfo ? planInfo.name : request.plan;
+
+      const startDate = new Date();
+      const endDate = new Date();
+      endDate.setMonth(endDate.getMonth() + request.duration);
+
+      const mailOptions = {
+        from: `Cash Logix <${process.env.EMAIL_USER}>`,
+        to: request.user.email,
+        subject: `تم الموافقة على طلب الاشتراك - ${planName}`,
+        html: `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; direction: rtl;">
+            <h2 style="color: #10b981; text-align: center;">تم الموافقة على طلب الاشتراك</h2>
+            <div style="background: #f0fdf4; border: 2px solid #10b981; border-radius: 8px; padding: 20px; margin: 20px 0;">
+              <p style="color: #065f46; font-size: 18px; font-weight: bold; text-align: center; margin: 0;">
+                🎉 تهانينا! تم الموافقة على طلب الاشتراك الخاص بك
+              </p>
+            </div>
+            <div style="background: #f5f5f5; padding: 20px; border-radius: 8px; margin: 20px 0;">
+              <h3 style="color: #333; margin-top: 0;">تفاصيل الاشتراك:</h3>
+              <p><strong>الخطة:</strong> ${planName}</p>
+              <p><strong>المدة:</strong> ${request.duration} ${request.duration === 1 ? 'شهر' : 'أشهر'}</p>
+              <p><strong>تاريخ البدء:</strong> ${startDate.toLocaleDateString('ar-EG')}</p>
+              <p><strong>تاريخ الانتهاء:</strong> ${endDate.toLocaleDateString('ar-EG')}</p>
+              <p><strong>المبلغ المدفوع:</strong> ${request.amount} ج.م</p>
+              ${request.adminNotes ? `<div style="background: #fff; padding: 15px; border-radius: 8px; margin-top: 15px; border-right: 4px solid #10b981;">
+                <p style="margin: 0; color: #333;"><strong>ملاحظات من الإدارة:</strong></p>
+                <p style="margin: 10px 0 0 0; color: #666;">${request.adminNotes}</p>
+              </div>` : ''}
+            </div>
+            <div style="background: #eff6ff; padding: 20px; border-radius: 8px; margin: 20px 0;">
+              <h3 style="color: #1e40af; margin-top: 0;">ما التالي؟</h3>
+              <p style="color: #1e3a8a;">يمكنك الآن الاستمتاع بجميع ميزات خطة ${planName}. قم بتسجيل الدخول إلى حسابك للبدء في استخدام جميع الميزات المتاحة.</p>
+            </div>
+            <hr style="margin: 30px 0; border: none; border-top: 1px solid #eee;">
+            <p style="color: #666; font-size: 12px; text-align: center;">رسالة تلقائية من Cash Logix</p>
+          </div>
+        `
+      };
+
+      await sendEmailWithFallback(mailOptions);
+      console.log(`Approval email sent successfully to ${request.user.email}`);
+    } catch (emailError) {
+      // Log email error but don't fail the request
+      console.error('Failed to send approval email:', emailError.message);
+    }
+
     res.json({
       success: true,
       message: 'Subscription request approved successfully',
@@ -373,6 +426,58 @@ router.put('/subscription-requests/:id/reject', protect, isAdmin, [
     // Repopulate after rejection
     await request.populate('user', 'firstName lastName email');
     await request.populate('processedBy', 'firstName lastName email');
+
+    // Send email notification to user
+    try {
+      const planPricing = SubscriptionService.getPlanPricing();
+      const planInfo = planPricing[request.plan];
+      const planName = planInfo ? planInfo.name : request.plan;
+
+      const mailOptions = {
+        from: `Cash Logix <${process.env.EMAIL_USER}>`,
+        to: request.user.email,
+        subject: `تم رفض طلب الاشتراك - ${planName}`,
+        html: `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; direction: rtl;">
+            <h2 style="color: #dc2626; text-align: center;">تم رفض طلب الاشتراك</h2>
+            <div style="background: #fef2f2; border: 2px solid #dc2626; border-radius: 8px; padding: 20px; margin: 20px 0;">
+              <p style="color: #991b1b; font-size: 18px; font-weight: bold; text-align: center; margin: 0;">
+                للأسف، تم رفض طلب الاشتراك الخاص بك
+              </p>
+            </div>
+            <div style="background: #f5f5f5; padding: 20px; border-radius: 8px; margin: 20px 0;">
+              <h3 style="color: #333; margin-top: 0;">تفاصيل الطلب:</h3>
+              <p><strong>رقم الطلب:</strong> ${request._id}</p>
+              <p><strong>الخطة:</strong> ${planName}</p>
+              <p><strong>المدة:</strong> ${request.duration} ${request.duration === 1 ? 'شهر' : 'أشهر'}</p>
+              <p><strong>المبلغ:</strong> ${request.amount} ج.م</p>
+              <p><strong>تاريخ الطلب:</strong> ${new Date(request.createdAt).toLocaleDateString('ar-EG')}</p>
+              ${request.adminNotes ? `<div style="background: #fff; padding: 15px; border-radius: 8px; margin-top: 15px; border-right: 4px solid #dc2626;">
+                <p style="margin: 0; color: #333;"><strong>ملاحظات من الإدارة:</strong></p>
+                <p style="margin: 10px 0 0 0; color: #666;">${request.adminNotes}</p>
+              </div>` : '<p style="color: #666; margin-top: 15px;">لم يتم إضافة ملاحظات من الإدارة.</p>'}
+            </div>
+            <div style="background: #eff6ff; padding: 20px; border-radius: 8px; margin: 20px 0;">
+              <h3 style="color: #1e40af; margin-top: 0;">ما يمكنك فعله:</h3>
+              <ul style="color: #1e3a8a; padding-right: 20px;">
+                <li>تحقق من صورة إيصال الدفع التي أرسلتها</li>
+                <li>تأكد من صحة معلومات الدفع</li>
+                <li>يمكنك إرسال طلب اشتراك جديد بعد تصحيح المشكلة</li>
+                <li>إذا كان لديك أي استفسار، لا تتردد في التواصل معنا</li>
+              </ul>
+            </div>
+            <hr style="margin: 30px 0; border: none; border-top: 1px solid #eee;">
+            <p style="color: #666; font-size: 12px; text-align: center;">رسالة تلقائية من Cash Logix</p>
+          </div>
+        `
+      };
+
+      await sendEmailWithFallback(mailOptions);
+      console.log(`Rejection email sent successfully to ${request.user.email}`);
+    } catch (emailError) {
+      // Log email error but don't fail the request
+      console.error('Failed to send rejection email:', emailError.message);
+    }
 
     res.json({
       success: true,
