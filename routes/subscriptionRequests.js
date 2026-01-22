@@ -181,7 +181,7 @@ router.post('/', protect, upload.single('transactionScreenshot'), [
     // Populate user info
     await subscriptionRequest.populate('user', 'firstName lastName email');
 
-    // Send email notification to admin
+    // Send email notifications to admin and user
     try {
       const planPricing = SubscriptionService.getPlanPricing();
       const planInfo = planPricing[plan];
@@ -203,9 +203,10 @@ router.post('/', protect, upload.single('transactionScreenshot'), [
           : `${process.env.BACKEND_URL || process.env.FRONTEND_URL || 'http://localhost:5000'}${screenshotUrl.startsWith('/') ? screenshotUrl : '/' + screenshotUrl}`)
         : null;
 
-      const mailOptions = {
+      // Email to admin
+      const adminMailOptions = {
         from: `Cash Logix <${process.env.EMAIL_USER}>`,
-        to: 'gergessamuel100@gmail.com',
+        to: process.env.EMAIL_USER,
         subject: `طلب اشتراك جديد - ${subscriptionRequest.user.firstName} ${subscriptionRequest.user.lastName}`,
         html: `
           <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; direction: rtl;">
@@ -243,11 +244,51 @@ router.post('/', protect, upload.single('transactionScreenshot'), [
         `
       };
 
-      await sendEmailWithFallback(mailOptions);
-      console.log('Subscription request email sent successfully to gergessamuel100@gmail.com');
+      // Email to user (confirmation)
+      const userMailOptions = {
+        from: `Cash Logix <${process.env.EMAIL_USER}>`,
+        to: subscriptionRequest.user.email,
+        subject: `تم استلام طلب الاشتراك - ${planName}`,
+        html: `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; direction: rtl;">
+            <h2 style="color: #2563eb; text-align: center;">تم استلام طلب الاشتراك</h2>
+            <div style="background: #eff6ff; border: 2px solid #2563eb; border-radius: 8px; padding: 20px; margin: 20px 0;">
+              <p style="color: #1e40af; font-size: 18px; font-weight: bold; text-align: center; margin: 0;">
+                ✅ تم استلام طلب الاشتراك الخاص بك بنجاح
+              </p>
+            </div>
+            <div style="background: #f5f5f5; padding: 20px; border-radius: 8px; margin: 20px 0;">
+              <h3 style="color: #333; margin-top: 0;">تفاصيل الطلب:</h3>
+              <p><strong>رقم الطلب:</strong> ${subscriptionRequest._id}</p>
+              <p><strong>الخطة:</strong> ${planName}</p>
+              <p><strong>المدة:</strong> ${duration} ${duration === 1 ? 'شهر' : 'أشهر'}</p>
+              <p><strong>المبلغ الإجمالي:</strong> ${totalPrice} ج.م</p>
+              <p><strong>طريقة الدفع:</strong> ${paymentMethodName}</p>
+              <p><strong>معلومات الدفع:</strong> ${paymentInfo.value}</p>
+              <p><strong>الحالة:</strong> <span style="color: #f59e0b; font-weight: bold;">قيد المراجعة</span></p>
+              <p><strong>تاريخ الطلب:</strong> ${new Date(subscriptionRequest.createdAt).toLocaleString('ar-EG')}</p>
+            </div>
+            <div style="background: #f0fdf4; padding: 20px; border-radius: 8px; margin: 20px 0;">
+              <h3 style="color: #065f46; margin-top: 0;">ما التالي؟</h3>
+              <p style="color: #047857;">سيتم مراجعة طلبك من قبل فريقنا. ستصلك رسالة بريد إلكتروني عند الموافقة على طلبك أو في حالة الحاجة إلى أي معلومات إضافية.</p>
+              <p style="color: #047857; margin-top: 15px;">نقدر صبرك ونشكرك على اختيار Cash Logix!</p>
+            </div>
+            <hr style="margin: 30px 0; border: none; border-top: 1px solid #eee;">
+            <p style="color: #666; font-size: 12px; text-align: center;">رسالة تلقائية من Cash Logix</p>
+          </div>
+        `
+      };
+
+      // Send both emails
+      await Promise.all([
+        sendEmailWithFallback(adminMailOptions),
+        sendEmailWithFallback(userMailOptions)
+      ]);
+
+      console.log(`Subscription request emails sent successfully to admin (${process.env.EMAIL_USER}) and user (${subscriptionRequest.user.email})`);
     } catch (emailError) {
       // Log email error but don't fail the request
-      console.error('Failed to send subscription request email:', emailError.message);
+      console.error('Failed to send subscription request emails:', emailError.message);
     }
 
     res.status(201).json({
