@@ -3,157 +3,143 @@ const mongoose = require('mongoose');
 const User = require('../models/User');
 const Supervisor = require('../models/Supervisor');
 
+/* ==========================
+   CONSTANTS & CONFIG
+   ========================== */
+const ROLES = {
+  SUPERVISOR: 'supervisor',
+  ADMIN: 'admin',
+  COMPANY_OWNER: 'company_owner',
+  ACCOUNTANT: 'accountant',
+  PARTNER_INPUT: 'partner_input',
+  INDIVIDUAL_USER: 'individual_user',
+  COMPANY: 'company'
+};
+
+const PLANS = {
+  FREE: 'free',
+  PERSONAL_PLUS: 'personal_plus',
+  CONTRACTOR_PRO: 'contractor_pro',
+  PRO: 'pro',
+  COMPANY_PLAN: 'company_plan'
+};
+
+const PLAN_LEVELS = {
+  [PLANS.FREE]: 0,
+  [PLANS.PERSONAL_PLUS]: 1,
+  [PLANS.CONTRACTOR_PRO]: 2,
+  [PLANS.PRO]: 2,
+  [PLANS.COMPANY_PLAN]: 3
+};
+
+/* ==========================
+   HELPER FUNCTIONS
+   ========================== */
+/**
+ * Standardized Error Response Helper
+ * Keeps code DRY and consistent across all middleware
+ */
+const sendError = (res, statusCode, message, arabic, extra = {}) => {
+  return res.status(statusCode).json({
+    success: false,
+    error: {
+      message,
+      arabic,
+      statusCode,
+      ...extra
+    }
+  });
+};
+
+/* ==========================
+   MIDDLEWARE FUNCTIONS
+   ========================== */
+
 // Protect routes - verify JWT token (supports both users and supervisors)
 const protect = async (req, res, next) => {
-  // Check if MongoDB is connected before processing
+  // 1. Check Database Connection
   if (mongoose.connection.readyState !== 1) {
     console.error('Auth middleware error: MongoDB not connected');
-    return res.status(503).json({
-      success: false,
-      error: {
-        message: 'Service temporarily unavailable - database connection issue',
-        arabic: 'الخدمة غير متاحة مؤقتاً - مشكلة في الاتصال بقاعدة البيانات',
-        statusCode: 503
-      }
-    });
+    return sendError(res, 503,
+      'Service temporarily unavailable - database connection issue',
+      'الخدمة غير متاحة مؤقتاً - مشكلة في الاتصال بقاعدة البيانات'
+    );
   }
 
+  // 2. Extract Token
   let token;
-
-  // Check for token in headers
   if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
-    try {
-      // Get token from header
-      token = req.headers.authorization.split(' ')[1];
-
-      // Verify token
-      const decoded = jwt.verify(token, process.env.JWT_SECRET);
-
-      // Check if this is a supervisor token
-      if (decoded.role === 'supervisor' && decoded.supervisorId) {
-        // Get supervisor from token
-        const supervisor = await Supervisor.findById(decoded.supervisorId).select('-password');
-
-        if (!supervisor) {
-          return res.status(401).json({
-            success: false,
-            error: {
-              message: 'Supervisor not found',
-              arabic: 'المشرف غير موجود',
-              statusCode: 401
-            }
-          });
-        }
-
-        // Check if supervisor is active
-        if (!supervisor.isActive) {
-          return res.status(401).json({
-            success: false,
-            error: {
-              message: 'Supervisor account is deactivated',
-              arabic: 'حساب المشرف معطل',
-              statusCode: 401
-            }
-          });
-        }
-
-        // Set supervisor info
-        req.supervisor = supervisor;
-        req.user = await User.findById(supervisor.user).select('-password');
-        req.isSupervisor = true;
-
-        if (!req.user) {
-          return res.status(401).json({
-            success: false,
-            error: {
-              message: 'User not found',
-              arabic: 'المستخدم غير موجود',
-              statusCode: 401
-            }
-          });
-        }
-
-        next();
-        return;
-      }
-
-      // Regular user authentication
-      req.isSupervisor = false;
-
-      // Get user from token
-      req.user = await User.findById(decoded.id).select('-password');
-
-      if (!req.user) {
-        return res.status(401).json({
-          success: false,
-          error: {
-            message: 'User not found',
-            arabic: 'المستخدم غير موجود',
-            statusCode: 401
-          }
-        });
-      }
-
-      // Check if user is active
-      if (!req.user.isActive) {
-        return res.status(401).json({
-          success: false,
-          error: {
-            message: 'Account is deactivated',
-            arabic: 'الحساب معطل',
-            statusCode: 401
-          }
-        });
-      }
-
-      // Check if user is blocked
-      if (req.user.isBlocked) {
-        return res.status(401).json({
-          success: false,
-          error: {
-            message: 'Account is blocked',
-            arabic: 'الحساب محظور',
-            statusCode: 401
-          }
-        });
-      }
-
-      // Check if email is verified (only for regular users, not supervisors or admins)
-      const userIsAdmin = req.user.accountType === 'admin' || req.user.role === 'admin';
-      if (!userIsAdmin && !req.user.isEmailVerified) {
-        return res.status(401).json({
-          success: false,
-          error: {
-            message: 'Please verify your email before accessing this resource',
-            arabic: 'يرجى التحقق من بريدك الإلكتروني قبل الوصول إلى هذا المورد',
-            statusCode: 401
-          }
-        });
-      }
-
-      next();
-    } catch (error) {
-      console.error('Auth middleware error:', error);
-      return res.status(401).json({
-        success: false,
-        error: {
-          message: 'Not authorized, token failed',
-          arabic: 'غير مخول، فشل الرمز',
-          statusCode: 401
-        }
-      });
-    }
+    token = req.headers.authorization.split(' ')[1];
   }
 
   if (!token) {
-    return res.status(401).json({
-      success: false,
-      error: {
-        message: 'Not authorized, no token',
-        arabic: 'غير مخول، لا يوجد رمز',
-        statusCode: 401
+    return sendError(res, 401, 'Not authorized, no token', 'غير مخول، لا يوجد رمز');
+  }
+
+  try {
+    // 3. Verify Token
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+
+    // ==========================
+    // CASE A: Supervisor Login
+    // ==========================
+    if (decoded.role === ROLES.SUPERVISOR && decoded.supervisorId) {
+      const supervisor = await Supervisor.findById(decoded.supervisorId).select('-password');
+
+      if (!supervisor) {
+        return sendError(res, 401, 'Supervisor not found', 'المشرف غير موجود');
       }
-    });
+
+      if (!supervisor.isActive) {
+        return sendError(res, 401, 'Supervisor account is deactivated', 'حساب المشرف معطل');
+      }
+
+      const user = await User.findById(supervisor.user).select('-password');
+      if (!user) {
+        return sendError(res, 401, 'User not found', 'المستخدم غير موجود');
+      }
+
+      // Set context
+      req.supervisor = supervisor;
+      req.user = user;
+      req.isSupervisor = true;
+
+      return next();
+    }
+
+    // ==========================
+    // CASE B: Regular User Login
+    // ==========================
+    req.isSupervisor = false;
+    const user = await User.findById(decoded.id).select('-password');
+
+    if (!user) {
+      return sendError(res, 401, 'User not found', 'المستخدم غير موجود');
+    }
+
+    if (!user.isActive) {
+      return sendError(res, 401, 'Account is deactivated', 'الحساب معطل');
+    }
+
+    if (user.isBlocked) {
+      return sendError(res, 401, 'Account is blocked', 'الحساب محظور');
+    }
+
+    // Check email verification (Skip for Admins)
+    const userIsAdmin = user.accountType === ROLES.ADMIN || user.role === ROLES.ADMIN;
+    if (!userIsAdmin && !user.isEmailVerified) {
+      return sendError(res, 401,
+        'Please verify your email before accessing this resource',
+        'يرجى التحقق من بريدك الإلكتروني قبل الوصول إلى هذا المورد'
+      );
+    }
+
+    req.user = user;
+    next();
+
+  } catch (error) {
+    console.error('Auth middleware error:', error);
+    return sendError(res, 401, 'Not authorized, token failed', 'غير مخول، فشل الرمز');
   }
 };
 
@@ -161,27 +147,15 @@ const protect = async (req, res, next) => {
 const authorize = (...roles) => {
   return (req, res, next) => {
     if (!req.user) {
-      return res.status(401).json({
-        success: false,
-        error: {
-          message: 'Not authorized',
-          arabic: 'غير مخول',
-          statusCode: 401
-        }
-      });
+      return sendError(res, 401, 'Not authorized', 'غير مخول');
     }
 
     if (!roles.includes(req.user.role)) {
-      return res.status(403).json({
-        success: false,
-        error: {
-          message: `User role ${req.user.role} is not authorized to access this route`,
-          arabic: `دور المستخدم ${req.user.role} غير مخول للوصول إلى هذا المسار`,
-          statusCode: 403
-        }
-      });
+      return sendError(res, 403,
+        `User role ${req.user.role} is not authorized to access this route`,
+        `دور المستخدم ${req.user.role} غير مخول للوصول إلى هذا المسار`
+      );
     }
-
     next();
   };
 };
@@ -189,127 +163,66 @@ const authorize = (...roles) => {
 // Check if user owns resource or has permission
 const checkOwnership = (resourceUserField = 'user') => {
   return (req, res, next) => {
-    // If user is owner of the resource, allow access
+    // Owner access
     if (req.resource && req.resource[resourceUserField].toString() === req.user._id.toString()) {
       return next();
     }
 
-    // If user is company owner or has admin role, allow access
-    if (req.user.role === 'company_owner' || req.user.role === 'supervisor') {
+    // Admin/Supervisor access
+    if (req.user.role === ROLES.COMPANY_OWNER || req.user.role === ROLES.SUPERVISOR) {
       return next();
     }
 
-    return res.status(403).json({
-      success: false,
-      error: {
-        message: 'Not authorized to access this resource',
-        arabic: 'غير مخول للوصول إلى هذا المورد',
-        statusCode: 403
-      }
-    });
+    return sendError(res, 403, 'Not authorized to access this resource', 'غير مخول للوصول إلى هذا المورد');
   };
 };
 
-// Check if user can create resource (supervisors cannot create)
+// Check if user can create resource
 const checkCreatePermission = (req, res, next) => {
-  // Supervisors cannot create resources
   if (req.isSupervisor) {
-    return res.status(403).json({
-      success: false,
-      error: {
-        message: 'Supervisors can only view resources, not create them',
-        arabic: 'المشرفون يمكنهم فقط عرض الموارد، وليس إنشاءها',
-        statusCode: 403
-      }
-    });
+    return sendError(res, 403, 'Supervisors can only view resources, not create them', 'المشرفون يمكنهم فقط عرض الموارد، وليس إنشاءها');
   }
 
-  // Check user role permissions
-  const canCreateRoles = ['individual_user', 'partner_input', 'accountant', 'company_owner'];
+  const canCreateRoles = [ROLES.INDIVIDUAL_USER, ROLES.PARTNER_INPUT, ROLES.ACCOUNTANT, ROLES.COMPANY_OWNER];
 
   if (!canCreateRoles.includes(req.user.role)) {
-    return res.status(403).json({
-      success: false,
-      error: {
-        message: 'Not authorized to create this resource',
-        arabic: 'غير مخول لإنشاء هذا المورد',
-        statusCode: 403
-      }
-    });
+    return sendError(res, 403, 'Not authorized to create this resource', 'غير مخول لإنشاء هذا المورد');
   }
 
   next();
 };
 
-// Check if user can edit resource (supervisors can only view, not edit)
+// Check if user can edit resource
 const checkEditPermission = (req, res, next) => {
-  // Supervisors cannot edit resources
   if (req.isSupervisor) {
-    return res.status(403).json({
-      success: false,
-      error: {
-        message: 'Supervisors can only view resources, not edit them',
-        arabic: 'المشرفون يمكنهم فقط عرض الموارد، وليس تعديلها',
-        statusCode: 403
-      }
-    });
+    return sendError(res, 403, 'Supervisors can only view resources, not edit them', 'المشرفون يمكنهم فقط عرض الموارد، وليس تعديلها');
   }
 
-  // Check user role permissions
-  const canEditRoles = ['individual_user', 'partner_input', 'accountant', 'company_owner'];
+  const canEditRoles = [ROLES.INDIVIDUAL_USER, ROLES.PARTNER_INPUT, ROLES.ACCOUNTANT, ROLES.COMPANY_OWNER];
 
   if (!canEditRoles.includes(req.user.role)) {
-    return res.status(403).json({
-      success: false,
-      error: {
-        message: 'Not authorized to edit this resource',
-        arabic: 'غير مخول لتعديل هذا المورد',
-        statusCode: 403
-      }
-    });
+    return sendError(res, 403, 'Not authorized to edit this resource', 'غير مخول لتعديل هذا المورد');
   }
 
   next();
 };
 
-// Check if user can view resource (allows supervisors)
+// Check if user can view resource
 const checkViewPermission = (req, res, next) => {
-  // Supervisors can view resources for the user they're supervising
-  if (req.isSupervisor) {
-    return next();
-  }
-
-  // All authenticated users can view resources
-  // Additional checks can be added based on business logic
+  // Logic remains simple as originally designed: Allow everyone who is authenticated
   next();
 };
 
-// Check if user can delete resource (supervisors cannot delete)
+// Check if user can delete resource
 const checkDeletePermission = (req, res, next) => {
-  // Supervisors cannot delete resources
   if (req.isSupervisor) {
-    return res.status(403).json({
-      success: false,
-      error: {
-        message: 'Supervisors can only view resources, not delete them',
-        arabic: 'المشرفون يمكنهم فقط عرض الموارد، وليس حذفها',
-        statusCode: 403
-      }
-    });
+    return sendError(res, 403, 'Supervisors can only view resources, not delete them', 'المشرفون يمكنهم فقط عرض الموارد، وليس حذفها');
   }
 
-  // Check user role permissions
-  const canDeleteRoles = ['individual_user', 'accountant', 'company_owner'];
+  const canDeleteRoles = [ROLES.INDIVIDUAL_USER, ROLES.ACCOUNTANT, ROLES.COMPANY_OWNER];
 
   if (!canDeleteRoles.includes(req.user.role)) {
-    return res.status(403).json({
-      success: false,
-      error: {
-        message: 'Not authorized to delete this resource',
-        arabic: 'غير مخول لحذف هذا المورد',
-        statusCode: 403
-      }
-    });
+    return sendError(res, 403, 'Not authorized to delete this resource', 'غير مخول لحذف هذا المورد');
   }
 
   next();
@@ -317,17 +230,10 @@ const checkDeletePermission = (req, res, next) => {
 
 // Check if user can approve expenses
 const checkApprovalPermission = (req, res, next) => {
-  const canApproveRoles = ['accountant', 'supervisor', 'company_owner'];
+  const canApproveRoles = [ROLES.ACCOUNTANT, ROLES.SUPERVISOR, ROLES.COMPANY_OWNER];
 
   if (!canApproveRoles.includes(req.user.role)) {
-    return res.status(403).json({
-      success: false,
-      error: {
-        message: 'Not authorized to approve expenses',
-        arabic: 'غير مخول للموافقة على المصروفات',
-        statusCode: 403
-      }
-    });
+    return sendError(res, 403, 'Not authorized to approve expenses', 'غير مخول للموافقة على المصروفات');
   }
 
   next();
@@ -335,33 +241,28 @@ const checkApprovalPermission = (req, res, next) => {
 
 // Check if user can manage projects
 const checkProjectPermission = (req, res, next) => {
-  // Check subscription plan instead of account type
-  // Only paid plans (personal_plus, pro, company_plan) can access projects
-  // Check if user is in active free trial - they get access to projects
+  // Check Active Free Trial
   const isInActiveFreeTrial = req.user?.subscription?.freeTrial?.isActive &&
     req.user?.subscription?.freeTrial?.endDate &&
     new Date() <= new Date(req.user.subscription.freeTrial.endDate);
 
-  // If in free trial, allow access
   if (isInActiveFreeTrial) {
     return next();
   }
 
-  // Use effective plan (considers expiry)
-  const paidPlans = ['personal_plus', 'pro', 'company_plan'];
-  const effectivePlan = req.user?.getEffectivePlan ? req.user.getEffectivePlan() : (req.user?.subscription?.plan || 'free');
+  // Check Paid Plans
+  const paidPlans = [PLANS.PERSONAL_PLUS, PLANS.PRO, PLANS.COMPANY_PLAN]; // Note: 'pro' was in original code, kept it.
+  const effectivePlan = req.user?.getEffectivePlan ? req.user.getEffectivePlan() : (req.user?.subscription?.plan || PLANS.FREE);
 
   if (!paidPlans.includes(effectivePlan)) {
-    return res.status(403).json({
-      success: false,
-      error: {
-        message: 'Projects feature requires a paid subscription plan',
-        arabic: 'ميزة المشاريع تتطلب اشتراك مدفوع',
-        statusCode: 403,
+    return sendError(res, 403,
+      'Projects feature requires a paid subscription plan',
+      'ميزة المشاريع تتطلب اشتراك مدفوع',
+      {
         requiresUpgrade: true,
         isExpired: req.user?.isSubscriptionExpired || false
       }
-    });
+    );
   }
 
   next();
@@ -369,20 +270,11 @@ const checkProjectPermission = (req, res, next) => {
 
 // Check if user can manage companies
 const checkCompanyPermission = (req, res, next) => {
-  // Allow users with accountType 'company' to create companies
-  // Allow users with company management roles to manage companies
-  const canManageCompanyRoles = ['supervisor', 'company_owner'];
-  const canCreateCompany = req.user.accountType === 'company' && req.method === 'POST';
+  const canManageCompanyRoles = [ROLES.SUPERVISOR, ROLES.COMPANY_OWNER];
+  const canCreateCompany = req.user.accountType === ROLES.COMPANY && req.method === 'POST';
 
   if (!canManageCompanyRoles.includes(req.user.role) && !canCreateCompany) {
-    return res.status(403).json({
-      success: false,
-      error: {
-        message: 'Not authorized to manage companies',
-        arabic: 'غير مخول لإدارة الشركات',
-        statusCode: 403
-      }
-    });
+    return sendError(res, 403, 'Not authorized to manage companies', 'غير مخول لإدارة الشركات');
   }
 
   next();
@@ -390,47 +282,28 @@ const checkCompanyPermission = (req, res, next) => {
 
 // Check if user can manage users
 const checkUserManagementPermission = (req, res, next) => {
-  const canManageUserRoles = ['supervisor', 'company_owner'];
+  const canManageUserRoles = [ROLES.SUPERVISOR, ROLES.COMPANY_OWNER];
 
   if (!canManageUserRoles.includes(req.user.role)) {
-    return res.status(403).json({
-      success: false,
-      error: {
-        message: 'Not authorized to manage users',
-        arabic: 'غير مخول لإدارة المستخدمين',
-        statusCode: 403
-      }
-    });
+    return sendError(res, 403, 'Not authorized to manage users', 'غير مخول لإدارة المستخدمين');
   }
 
   next();
 };
 
-// Check subscription plan
+// Check subscription plan tier
 const checkSubscription = (requiredPlan) => {
   return (req, res, next) => {
-    const planHierarchy = {
-      'free': 0,
-      'personal_plus': 1,
-      'contractor_pro': 2,
-      'company_plan': 3
-    };
-
-    // Use effective plan (considers expiry)
-    const effectivePlan = req.user?.getEffectivePlan ? req.user.getEffectivePlan() : (req.user?.subscription?.plan || 'free');
-    const userPlanLevel = planHierarchy[effectivePlan] || 0;
-    const requiredPlanLevel = planHierarchy[requiredPlan] || 0;
+    const effectivePlan = req.user?.getEffectivePlan ? req.user.getEffectivePlan() : (req.user?.subscription?.plan || PLANS.FREE);
+    const userPlanLevel = PLAN_LEVELS[effectivePlan] || 0;
+    const requiredPlanLevel = PLAN_LEVELS[requiredPlan] || 0;
 
     if (userPlanLevel < requiredPlanLevel) {
-      return res.status(403).json({
-        success: false,
-        error: {
-          message: `This feature requires ${requiredPlan} subscription plan`,
-          arabic: `هذه الميزة تتطلب خطة اشتراك ${requiredPlan}`,
-          statusCode: 403,
-          isExpired: req.user?.isSubscriptionExpired || false
-        }
-      });
+      return sendError(res, 403,
+        `This feature requires ${requiredPlan} subscription plan`,
+        `هذه الميزة تتطلب خطة اشتراك ${requiredPlan}`,
+        { isExpired: req.user?.isSubscriptionExpired || false }
+      );
     }
 
     next();
@@ -439,49 +312,30 @@ const checkSubscription = (requiredPlan) => {
 
 // Check if user's subscription is active
 const checkActiveSubscription = (req, res, next) => {
-  // Check using isSubscriptionActive method which considers expiry
   const isActive = req.user?.isSubscriptionActive ? req.user.isSubscriptionActive() :
     (req.user?.subscription?.status === 'active' && (!req.user?.subscription?.endDate || new Date() <= new Date(req.user.subscription.endDate)));
 
   if (!isActive) {
-    return res.status(403).json({
-      success: false,
-      error: {
-        message: 'Subscription is not active',
-        arabic: req.user?.isSubscriptionExpired ? 'انتهت صلاحية الاشتراك، يرجى التجديد' : 'الاشتراك غير نشط',
-        statusCode: 403,
-        isExpired: req.user?.isSubscriptionExpired || false
-      }
-    });
+    return sendError(res, 403,
+      'Subscription is not active',
+      req.user?.isSubscriptionExpired ? 'انتهت صلاحية الاشتراك، يرجى التجديد' : 'الاشتراك غير نشط',
+      { isExpired: req.user?.isSubscriptionExpired || false }
+    );
   }
 
   next();
 };
 
-// Admin middleware - check if user is admin
+// Admin middleware
 const isAdmin = (req, res, next) => {
   if (!req.user) {
-    return res.status(401).json({
-      success: false,
-      error: {
-        message: 'Not authorized',
-        arabic: 'غير مخول',
-        statusCode: 401
-      }
-    });
+    return sendError(res, 401, 'Not authorized', 'غير مخول');
   }
 
-  const userIsAdmin = req.user.accountType === 'admin' || req.user.role === 'admin';
+  const userIsAdmin = req.user.accountType === ROLES.ADMIN || req.user.role === ROLES.ADMIN;
 
   if (!userIsAdmin) {
-    return res.status(403).json({
-      success: false,
-      error: {
-        message: 'Admin access required',
-        arabic: 'يتطلب الوصول كمسؤول',
-        statusCode: 403
-      }
-    });
+    return sendError(res, 403, 'Admin access required', 'يتطلب الوصول كمسؤول');
   }
 
   next();
