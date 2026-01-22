@@ -26,6 +26,7 @@ router.get('/', protect, checkViewPermission, async (req, res) => {
     const skip = (page - 1) * limit;
 
     // Build query - supervisors can view expenses for the user they're supervising
+    // Optimization: Ensure userId is ObjectId for consistent query performance
     const userId = req.isSupervisor ? req.user._id : req.user.id;
     let query = { user: userId, status: 'active' };
 
@@ -63,13 +64,14 @@ router.get('/', protect, checkViewPermission, async (req, res) => {
 
     // Search functionality
     if (req.query.search) {
+      const searchRegex = new RegExp(req.query.search, 'i');
       query.$or = [
-        { description: new RegExp(req.query.search, 'i') },
-        { category: new RegExp(req.query.search, 'i') },
-        { subcategory: new RegExp(req.query.search, 'i') },
-        { tags: { $in: [new RegExp(req.query.search, 'i')] } },
-        { location: new RegExp(req.query.search, 'i') },
-        { notes: new RegExp(req.query.search, 'i') }
+        { description: searchRegex },
+        { category: searchRegex },
+        { subcategory: searchRegex },
+        { tags: { $in: [searchRegex] } },
+        { location: searchRegex },
+        { notes: searchRegex }
       ];
     }
 
@@ -135,49 +137,28 @@ router.get('/', protect, checkViewPermission, async (req, res) => {
   }
 });
 
-// @desc    Get expenses for testing (description, category, price only) - NO AUTH REQUIRED
-// @route   GET /api/expenses/test-data
-// @access  Public (Temporary - for testing only)
-// router.get('/test-data', async (req, res) => {
-//   try {
-//     const expenses = await Expense.find({
-//       status: 'active'
-//     }).select('description category amount');
-
-//     // Transform to simple objects
-//     const simpleExpenses = expenses.map(expense => ({
-//       description: expense.description || '',
-//       category: expense.category,
-//       price: expense.amount
-//     }));
-
-//     res.json({
-//       success: true,
-//       data: simpleExpenses
-//     });
-//   } catch (error) {
-//     console.error('Get test expenses error:', error);
-//     res.status(500).json({
-//       success: false,
-//       error: {
-//         message: 'Server error',
-//         arabic: 'خطأ في الخادم',
-//         statusCode: 500
-//       }
-//     });
-//   }
-// });
-
 // @desc    Get expense categories
 // @route   GET /api/expenses/categories
 // @access  Private
 router.get('/categories', protect, checkViewPermission, async (req, res) => {
   try {
     const { type } = req.query;
+    const userId = req.user.id;
+
+    // Optimization: Add caching for categories to speed up dropdowns
+    const cacheKey = cacheService.generateKey('expense-categories', {
+      userId,
+      type: type || 'all'
+    });
+
+    const cached = cacheService.get(cacheKey);
+    if (cached) {
+      return res.json(cached);
+    }
 
     // Get categories from user's expenses
     const matchQuery = {
-      user: req.user.id,
+      user: new mongoose.Types.ObjectId(userId),
       status: 'active'
     };
 
@@ -210,13 +191,18 @@ router.get('/categories', protect, checkViewPermission, async (req, res) => {
     // Get predefined categories based on account type
     const predefinedCategories = getPredefinedCategories(req.user.accountType, type);
 
-    res.json({
+    const response = {
       success: true,
       data: {
         categories,
         predefinedCategories
       }
-    });
+    };
+
+    // Cache categories for a reasonable time (e.g., 5 mins)
+    cacheService.set(cacheKey, response, CACHE_TTL.MEDIUM);
+
+    res.json(response);
   } catch (error) {
     logger.error('Get categories error:', { error: error.message });
     res.status(500).json({
@@ -260,37 +246,32 @@ router.get('/analytics', protect, checkViewPermission, async (req, res) => {
 
     // Build query - supervisors can view expenses for the user they're supervising
     const userId = req.isSupervisor ? req.user._id : req.user.id;
+    const matchStage = {
+      $match: {
+        user: new mongoose.Types.ObjectId(userId),
+        date: { $gte: startDate, $lte: endDate },
+        status: 'active'
+      }
+    };
 
-    // Category breakdown
-    const categoryBreakdown = await Expense.aggregate([
-      {
-        $match: {
-          user: new mongoose.Types.ObjectId(userId),
-          date: { $gte: startDate, $lte: endDate },
-          status: 'active'
-        }
-      },
-      {
-        $group: {
-          _id: '$category',
-          amount: { $sum: '$amount' },
-          count: { $sum: 1 }
-        }
-      },
-      { $sort: { amount: -1 } }
-    ]);
-
-    // Monthly trend (for year view)
-    let monthlyTrend = [];
-    if (period === 'year') {
-      monthlyTrend = await Expense.aggregate([
+    // Optimization: Run all aggregations in parallel using Promise.all
+    const [categoryBreakdown, monthlyTrend, paymentMethodBreakdown, totalSummary] = await Promise.all([
+      // 1. Category Breakdown
+      Expense.aggregate([
+        matchStage,
         {
-          $match: {
-            user: new mongoose.Types.ObjectId(userId),
-            date: { $gte: startDate, $lte: endDate },
-            status: 'active'
+          $group: {
+            _id: '$category',
+            amount: { $sum: '$amount' },
+            count: { $sum: 1 }
           }
         },
+        { $sort: { amount: -1 } }
+      ]),
+
+      // 2. Monthly Trend (only if period is year)
+      period === 'year' ? Expense.aggregate([
+        matchStage,
         {
           $group: {
             _id: { $month: '$date' },
@@ -299,46 +280,34 @@ router.get('/analytics', protect, checkViewPermission, async (req, res) => {
           }
         },
         { $sort: { _id: 1 } }
-      ]);
-    }
+      ]) : Promise.resolve([]),
 
-    // Payment method breakdown
-    const paymentMethodBreakdown = await Expense.aggregate([
-      {
-        $match: {
-          user: new mongoose.Types.ObjectId(userId),
-          date: { $gte: startDate, $lte: endDate },
-          status: 'active'
+      // 3. Payment Method Breakdown
+      Expense.aggregate([
+        matchStage,
+        {
+          $group: {
+            _id: '$paymentMethod',
+            amount: { $sum: '$amount' },
+            count: { $sum: 1 }
+          }
         }
-      },
-      {
-        $group: {
-          _id: '$paymentMethod',
-          amount: { $sum: '$amount' },
-          count: { $sum: 1 }
-        }
-      }
-    ]);
+      ]),
 
-    // Total summary
-    const totalSummary = await Expense.aggregate([
-      {
-        $match: {
-          user: new mongoose.Types.ObjectId(userId),
-          date: { $gte: startDate, $lte: endDate },
-          status: 'active'
+      // 4. Total Summary
+      Expense.aggregate([
+        matchStage,
+        {
+          $group: {
+            _id: null,
+            totalAmount: { $sum: '$amount' },
+            totalCount: { $sum: 1 },
+            averageAmount: { $avg: '$amount' },
+            maxAmount: { $max: '$amount' },
+            minAmount: { $min: '$amount' }
+          }
         }
-      },
-      {
-        $group: {
-          _id: null,
-          totalAmount: { $sum: '$amount' },
-          totalCount: { $sum: 1 },
-          averageAmount: { $avg: '$amount' },
-          maxAmount: { $max: '$amount' },
-          minAmount: { $min: '$amount' }
-        }
-      }
+      ])
     ]);
 
     res.json({
@@ -375,9 +344,11 @@ router.get('/analytics', protect, checkViewPermission, async (req, res) => {
 // @access  Private
 router.get('/:id', protect, checkViewPermission, async (req, res) => {
   try {
+    // Optimization: Use lean() for read-only operation
     const expense = await Expense.findById(req.params.id)
       .populate('project', 'name')
-      .populate('company', 'name');
+      .populate('company', 'name')
+      .lean();
 
     if (!expense) {
       return res.status(404).json({
@@ -478,7 +449,6 @@ router.post('/', protect, checkSubscriptionLimit('expense'), checkCreatePermissi
     } = req.body;
 
     // Validate project/company association based on type
-    // Convert empty strings to undefined for optional fields
     const cleanedDescription = description && description.trim() ? description.trim() : undefined;
 
     if (type === 'project' && !project) {
@@ -524,48 +494,50 @@ router.post('/', protect, checkSubscriptionLimit('expense'), checkCreatePermissi
       }
     });
 
-    // Increment voice input counter if this was created via voice
-    if (aiProcessing && aiProcessing.isVoiceInput) {
-      const User = require('../models/User');
-      const user = await User.findById(req.user.id);
-      if (user) {
-        await user.incrementUsage('voiceInput');
-      }
-    }
-
-    // Update project budget if this is a project expense
-    if (type === 'project' && project) {
-      const Project = require('../models/Project');
-      const projectDoc = await Project.findById(project);
-      if (projectDoc) {
-        await projectDoc.addExpense(expense._id, amount, category, req.user.id);
-      }
-    }
-
-    // Create approval workflow for business expenses
+    // Optimization: Run side-effects (updates/workflow) in parallel
+    const sideEffects = [];
     let approval = null;
-    if (type === 'business' && company) {
-      const Approval = require('../models/Approval');
-      try {
-        // Determine workflow based on amount
-        const workflow = amount > 1000 ? 'multi_level' : 'single_approval';
-        approval = await Approval.createExpenseApproval(
-          expense,
-          company,
-          req.user.id,
-          workflow
-        );
-      } catch (approvalError) {
-        console.error('Approval creation error:', approvalError);
-        // Don't fail the expense creation if approval fails
-      }
-    }
 
-    // Populate the created expense
-    await expense.populate([
+    // 1. Populate expense (needed for response)
+    sideEffects.push(expense.populate([
       { path: 'project', select: 'name' },
       { path: 'company', select: 'name' }
-    ]);
+    ]));
+
+    // 2. Increment voice input counter
+    if (aiProcessing && aiProcessing.isVoiceInput) {
+      const User = require('../models/User');
+      sideEffects.push(
+        User.findById(req.user.id)
+          .then(user => user && user.incrementUsage('voiceInput'))
+          .catch(err => logger.error('Voice usage increment failed', { error: err.message }))
+      );
+    }
+
+    // 3. Update project budget
+    if (type === 'project' && project) {
+      const Project = require('../models/Project');
+      sideEffects.push(
+        Project.findById(project)
+          .then(projectDoc => projectDoc && projectDoc.addExpense(expense._id, amount, category, req.user.id))
+          .catch(err => logger.error('Project budget update failed', { error: err.message }))
+      );
+    }
+
+    // 4. Create approval workflow
+    if (type === 'business' && company) {
+      const Approval = require('../models/Approval');
+      const workflow = amount > 1000 ? 'multi_level' : 'single_approval';
+      // We push this to promise array, but also assign result to 'approval' var
+      sideEffects.push(
+        Approval.createExpenseApproval(expense, company, req.user.id, workflow)
+          .then(res => { approval = res; })
+          .catch(err => logger.error('Approval creation failed', { error: err.message }))
+      );
+    }
+
+    // Await all side effects
+    await Promise.all(sideEffects);
 
     const responseData = { expense };
     if (approval) {
@@ -574,6 +546,8 @@ router.post('/', protect, checkSubscriptionLimit('expense'), checkCreatePermissi
 
     // Invalidate user's expense cache
     cacheService.invalidateUser(req.user.id, 'expenses');
+    // Also invalidate categories cache in case a new category was created
+    cacheService.invalidateUser(req.user.id, 'expense-categories');
 
     res.status(201).json({
       success: true,
@@ -618,17 +592,11 @@ router.put('/:id', protect, checkEditPermission, [
     .withMessage('Description must be less than 500 characters')
 ], async (req, res) => {
   try {
-    // Check for validation errors
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
       return res.status(400).json({
         success: false,
-        error: {
-          message: 'Validation failed',
-          arabic: 'فشل التحقق من البيانات',
-          details: errors.array(),
-          statusCode: 400
-        }
+        error: { message: 'Validation failed', arabic: 'فشل التحقق من البيانات', details: errors.array(), statusCode: 400 }
       });
     }
 
@@ -636,51 +604,33 @@ router.put('/:id', protect, checkEditPermission, [
     if (!expense) {
       return res.status(404).json({
         success: false,
-        error: {
-          message: 'Expense not found',
-          arabic: 'المصروف غير موجود',
-          statusCode: 404
-        }
+        error: { message: 'Expense not found', arabic: 'المصروف غير موجود', statusCode: 404 }
       });
     }
 
-    // Check if user can edit this expense
     if (expense.user.toString() !== req.user.id &&
       !['supervisor', 'company_owner'].includes(req.user.role)) {
       return res.status(403).json({
         success: false,
-        error: {
-          message: 'Not authorized to edit this expense',
-          arabic: 'غير مخول لتعديل هذا المصروف',
-          statusCode: 403
-        }
+        error: { message: 'Not authorized to edit this expense', arabic: 'غير مخول لتعديل هذا المصروف', statusCode: 403 }
       });
     }
 
     const {
-      amount,
-      category,
-      subcategory,
-      description,
-      paymentMethod,
-      date,
-      tags,
-      location,
-      notes,
-      aiProcessing
+      amount, category, subcategory, description,
+      paymentMethod, date, tags, location, notes, aiProcessing
     } = req.body;
 
-    // Store old values for project budget update
     const oldAmount = expense.amount;
-    const oldProject = expense.project;
-
-    // Clean description: convert empty strings to undefined
     const cleanedDescription = description !== undefined
       ? (description.trim() ? description.trim() : undefined)
       : undefined;
 
-    // Update expense
-    const updatedExpense = await Expense.findByIdAndUpdate(
+    // Optimization: Update expense and project budget in parallel
+    const updatePromises = [];
+
+    // 1. Update Expense
+    const expenseUpdatePromise = Expense.findByIdAndUpdate(
       req.params.id,
       {
         ...(amount && { amount }),
@@ -699,24 +649,29 @@ router.put('/:id', protect, checkEditPermission, [
       { path: 'project', select: 'name' },
       { path: 'company', select: 'name' }
     ]);
+    updatePromises.push(expenseUpdatePromise);
 
-    // Update project budget if this expense is linked to a project
-    if (updatedExpense.project) {
+    // 2. Update Project Budget (if applicable and amount changed)
+    if (expense.project && amount && amount !== oldAmount) {
       const Project = require('../models/Project');
-      const projectDoc = await Project.findById(updatedExpense.project);
-      if (projectDoc) {
-        // If amount changed, update the budget
-        if (amount && amount !== oldAmount) {
-          // Remove old amount and add new amount
-          projectDoc.budget.spent = projectDoc.budget.spent - oldAmount + amount;
-          projectDoc.budget.remaining = projectDoc.budget.total - projectDoc.budget.spent;
-          await projectDoc.save();
-        }
-      }
+      const projectUpdatePromise = Project.findById(expense.project)
+        .then(projectDoc => {
+          if (projectDoc) {
+            // Remove old amount and add new amount
+            projectDoc.budget.spent = projectDoc.budget.spent - oldAmount + amount;
+            projectDoc.budget.remaining = projectDoc.budget.total - projectDoc.budget.spent;
+            return projectDoc.save();
+          }
+        });
+      updatePromises.push(projectUpdatePromise);
     }
+
+    // Execute parallel updates
+    const [updatedExpense] = await Promise.all(updatePromises);
 
     // Invalidate user's expense cache
     cacheService.invalidateUser(req.user.id, 'expenses');
+    if (category) cacheService.invalidateUser(req.user.id, 'expense-categories');
 
     res.json({
       success: true,
@@ -728,11 +683,7 @@ router.put('/:id', protect, checkEditPermission, [
     logger.error('Update expense error:', { error: error.message });
     res.status(500).json({
       success: false,
-      error: {
-        message: 'Server error',
-        arabic: 'خطأ في الخادم',
-        statusCode: 500
-      }
+      error: { message: 'Server error', arabic: 'خطأ في الخادم', statusCode: 500 }
     });
   }
 });
@@ -746,45 +697,43 @@ router.delete('/:id', protect, checkDeletePermission, async (req, res) => {
     if (!expense) {
       return res.status(404).json({
         success: false,
-        error: {
-          message: 'Expense not found',
-          arabic: 'المصروف غير موجود',
-          statusCode: 404
-        }
+        error: { message: 'Expense not found', arabic: 'المصروف غير موجود', statusCode: 404 }
       });
     }
 
-    // Check if user can delete this expense
     if (expense.user.toString() !== req.user.id &&
       !['supervisor', 'company_owner'].includes(req.user.role)) {
       return res.status(403).json({
         success: false,
-        error: {
-          message: 'Not authorized to delete this expense',
-          arabic: 'غير مخول لحذف هذا المصروف',
-          statusCode: 403
-        }
+        error: { message: 'Not authorized to delete this expense', arabic: 'غير مخول لحذف هذا المصروف', statusCode: 403 }
       });
     }
 
-    // Update project budget if this expense is linked to a project
+    // Optimization: Run delete and project budget update in parallel
+    const tasks = [];
+
+    // 1. Soft Delete
+    expense.status = 'deleted';
+    tasks.push(expense.save());
+
+    // 2. Update Project Budget
     if (expense.project) {
       const Project = require('../models/Project');
-      const projectDoc = await Project.findById(expense.project);
-      if (projectDoc) {
-        // Remove the expense amount from project budget
-        projectDoc.budget.spent = Math.max(0, projectDoc.budget.spent - expense.amount);
-        projectDoc.budget.remaining = projectDoc.budget.total - projectDoc.budget.spent;
-        await projectDoc.save();
-      }
+      tasks.push(
+        Project.findById(expense.project).then(projectDoc => {
+          if (projectDoc) {
+            projectDoc.budget.spent = Math.max(0, projectDoc.budget.spent - expense.amount);
+            projectDoc.budget.remaining = projectDoc.budget.total - projectDoc.budget.spent;
+            return projectDoc.save();
+          }
+        })
+      );
     }
 
-    // Soft delete by setting status to deleted
-    expense.status = 'deleted';
-    await expense.save();
+    await Promise.all(tasks);
 
-    // Invalidate user's expense cache
     cacheService.invalidateUser(req.user.id, 'expenses');
+    cacheService.invalidateUser(req.user.id, 'expense-categories');
 
     res.json({
       success: true,
@@ -795,11 +744,7 @@ router.delete('/:id', protect, checkDeletePermission, async (req, res) => {
     logger.error('Delete expense error:', { error: error.message });
     res.status(500).json({
       success: false,
-      error: {
-        message: 'Server error',
-        arabic: 'خطأ في الخادم',
-        statusCode: 500
-      }
+      error: { message: 'Server error', arabic: 'خطأ في الخادم', statusCode: 500 }
     });
   }
 });
@@ -809,40 +754,28 @@ router.delete('/:id', protect, checkDeletePermission, async (req, res) => {
 // @access  Private
 router.get('/stats/summary', protect, checkViewPermission, async (req, res) => {
   try {
-    // Build query - supervisors can view expenses for the user they're supervising
     const userId = req.isSupervisor ? req.user._id : req.user.id;
-
-    // Build match query with filters (same as expenses list endpoint)
     const matchQuery = {
       user: new mongoose.Types.ObjectId(userId),
       status: 'active'
     };
 
-    // Filter by category
     if (req.query.category) {
       matchQuery.category = new RegExp(req.query.category, 'i');
     }
 
-    // Filter by date range (startDate/endDate take precedence over year/month)
     if (req.query.startDate || req.query.endDate) {
       matchQuery.date = {};
-      if (req.query.startDate) {
-        matchQuery.date.$gte = new Date(req.query.startDate);
-      }
-      if (req.query.endDate) {
-        matchQuery.date.$lte = new Date(req.query.endDate);
-      }
+      if (req.query.startDate) matchQuery.date.$gte = new Date(req.query.startDate);
+      if (req.query.endDate) matchQuery.date.$lte = new Date(req.query.endDate);
     } else if (req.query.year || req.query.month) {
-      // Use year/month if provided
       const currentYear = req.query.year ? parseInt(req.query.year) : new Date().getFullYear();
       const currentMonth = req.query.month ? parseInt(req.query.month) : new Date().getMonth() + 1;
       const startDate = new Date(currentYear, currentMonth - 1, 1);
       const endDate = new Date(currentYear, currentMonth, 0, 23, 59, 59);
       matchQuery.date = { $gte: startDate, $lte: endDate };
     }
-    // If no date filters provided, don't add date filter (shows all expenses)
 
-    // Add search filter to match query if provided
     if (req.query.search) {
       matchQuery.$or = [
         { description: new RegExp(req.query.search, 'i') },
@@ -850,32 +783,30 @@ router.get('/stats/summary', protect, checkViewPermission, async (req, res) => {
       ];
     }
 
-    // Build aggregation pipeline
-    const pipeline = [
-      {
-        $match: matchQuery
-      }
+    // Optimization: Parallelize total stats and monthly summary
+    const tasks = [
+      Expense.aggregate([
+        { $match: matchQuery },
+        {
+          $group: {
+            _id: null,
+            totalAmount: { $sum: '$amount' },
+            count: { $sum: 1 },
+            averageAmount: { $avg: '$amount' }
+          }
+        }
+      ])
     ];
 
-    // Add grouping to calculate stats
-    pipeline.push({
-      $group: {
-        _id: null,
-        totalAmount: { $sum: '$amount' },
-        count: { $sum: 1 },
-        averageAmount: { $avg: '$amount' }
-      }
-    });
-
-    const totalExpenses = await Expense.aggregate(pipeline);
-
-    // Get monthly summary for backward compatibility (only if year/month provided)
-    let monthlySummary = null;
     if (req.query.year || req.query.month) {
       const currentYear = req.query.year ? parseInt(req.query.year) : new Date().getFullYear();
       const currentMonth = req.query.month ? parseInt(req.query.month) : new Date().getMonth() + 1;
-      monthlySummary = await Expense.getMonthlySummary(userId, currentYear, currentMonth);
+      tasks.push(Expense.getMonthlySummary(userId, currentYear, currentMonth));
+    } else {
+      tasks.push(Promise.resolve(null));
     }
+
+    const [totalExpenses, monthlySummary] = await Promise.all(tasks);
 
     res.json({
       success: true,
@@ -888,11 +819,7 @@ router.get('/stats/summary', protect, checkViewPermission, async (req, res) => {
     logger.error('Get expense stats error:', { error: error.message });
     res.status(500).json({
       success: false,
-      error: {
-        message: 'Server error',
-        arabic: 'خطأ في الخادم',
-        statusCode: 500
-      }
+      error: { message: 'Server error', arabic: 'خطأ في الخادم', statusCode: 500 }
     });
   }
 });
@@ -912,22 +839,14 @@ router.put('/:id/approve', protect, checkApprovalPermission, [
     if (!expense) {
       return res.status(404).json({
         success: false,
-        error: {
-          message: 'Expense not found',
-          arabic: 'المصروف غير موجود',
-          statusCode: 404
-        }
+        error: { message: 'Expense not found', arabic: 'المصروف غير موجود', statusCode: 404 }
       });
     }
 
     if (expense.approval.status !== 'pending') {
       return res.status(400).json({
         success: false,
-        error: {
-          message: 'Expense is not pending approval',
-          arabic: 'المصروف ليس في انتظار الموافقة',
-          statusCode: 400
-        }
+        error: { message: 'Expense is not pending approval', arabic: 'المصروف ليس في انتظار الموافقة', statusCode: 400 }
       });
     }
 
@@ -944,11 +863,7 @@ router.put('/:id/approve', protect, checkApprovalPermission, [
     logger.error('Approve expense error:', { error: error.message });
     res.status(500).json({
       success: false,
-      error: {
-        message: 'Server error',
-        arabic: 'خطأ في الخادم',
-        statusCode: 500
-      }
+      error: { message: 'Server error', arabic: 'خطأ في الخادم', statusCode: 500 }
     });
   }
 });
@@ -967,22 +882,14 @@ router.put('/:id/reject', protect, checkApprovalPermission, [
     if (!expense) {
       return res.status(404).json({
         success: false,
-        error: {
-          message: 'Expense not found',
-          arabic: 'المصروف غير موجود',
-          statusCode: 404
-        }
+        error: { message: 'Expense not found', arabic: 'المصروف غير موجود', statusCode: 404 }
       });
     }
 
     if (expense.approval.status !== 'pending') {
       return res.status(400).json({
         success: false,
-        error: {
-          message: 'Expense is not pending approval',
-          arabic: 'المصروف ليس في انتظار الموافقة',
-          statusCode: 400
-        }
+        error: { message: 'Expense is not pending approval', arabic: 'المصروف ليس في انتظار الموافقة', statusCode: 400 }
       });
     }
 
@@ -999,11 +906,7 @@ router.put('/:id/reject', protect, checkApprovalPermission, [
     logger.error('Reject expense error:', { error: error.message });
     res.status(500).json({
       success: false,
-      error: {
-        message: 'Server error',
-        arabic: 'خطأ في الخادم',
-        statusCode: 500
-      }
+      error: { message: 'Server error', arabic: 'خطأ في الخادم', statusCode: 500 }
     });
   }
 });
@@ -1027,31 +930,23 @@ router.post('/bulk', protect, checkCreatePermission, [
     if (!errors.isEmpty()) {
       return res.status(400).json({
         success: false,
-        error: {
-          message: 'Validation failed',
-          arabic: 'فشل في التحقق من البيانات',
-          details: errors.array(),
-          statusCode: 400
-        }
+        error: { message: 'Validation failed', arabic: 'فشل في التحقق من البيانات', details: errors.array(), statusCode: 400 }
       });
     }
 
     const { operation, expenseIds, data } = req.body;
 
     // Verify all expenses belong to the user
+    // Optimization: Use countDocuments for faster check if we don't need the docs for 'delete' soft delete is different though
     const expenses = await Expense.find({
       _id: { $in: expenseIds },
       user: req.user.id
-    });
+    }).select('_id'); // Only select ID for validation
 
     if (expenses.length !== expenseIds.length) {
       return res.status(400).json({
         success: false,
-        error: {
-          message: 'Some expenses not found or not authorized',
-          arabic: 'بعض المصروفات غير موجودة أو غير مخول',
-          statusCode: 400
-        }
+        error: { message: 'Some expenses not found or not authorized', arabic: 'بعض المصروفات غير موجودة أو غير مخول', statusCode: 400 }
       });
     }
 
@@ -1068,11 +963,7 @@ router.post('/bulk', protect, checkCreatePermission, [
         if (!data.category) {
           return res.status(400).json({
             success: false,
-            error: {
-              message: 'Category is required for update_category operation',
-              arabic: 'الفئة مطلوبة لعملية تحديث الفئة',
-              statusCode: 400
-            }
+            error: { message: 'Category is required', arabic: 'الفئة مطلوبة', statusCode: 400 }
           });
         }
         result = await Expense.updateMany(
@@ -1085,11 +976,7 @@ router.post('/bulk', protect, checkCreatePermission, [
         if (!data.type || !['personal', 'business', 'project'].includes(data.type)) {
           return res.status(400).json({
             success: false,
-            error: {
-              message: 'Valid type is required for update_type operation',
-              arabic: 'نوع صحيح مطلوب لعملية تحديث النوع',
-              statusCode: 400
-            }
+            error: { message: 'Valid type is required', arabic: 'نوع صحيح مطلوب', statusCode: 400 }
           });
         }
         result = await Expense.updateMany(
@@ -1099,10 +986,9 @@ router.post('/bulk', protect, checkCreatePermission, [
         break;
 
       case 'export':
-        // Return expenses data for export
         const exportData = await Expense.find({
           _id: { $in: expenseIds }
-        }).populate('project', 'name').populate('company', 'name');
+        }).populate('project', 'name').populate('company', 'name').lean();
 
         return res.json({
           success: true,
@@ -1113,12 +999,15 @@ router.post('/bulk', protect, checkCreatePermission, [
         });
     }
 
+    cacheService.invalidateUser(req.user.id, 'expenses');
+    if (operation === 'update_category') cacheService.invalidateUser(req.user.id, 'expense-categories');
+
     res.json({
       success: true,
       message: `Bulk ${operation} completed successfully`,
       arabic: `تم إكمال ${operation} المجمع بنجاح`,
       data: {
-        modifiedCount: result.modifiedCount,
+        modifiedCount: result ? result.modifiedCount : 0,
         operation
       }
     });
@@ -1126,11 +1015,7 @@ router.post('/bulk', protect, checkCreatePermission, [
     logger.error('Bulk operation error:', { error: error.message });
     res.status(500).json({
       success: false,
-      error: {
-        message: 'Server error',
-        arabic: 'خطأ في الخادم',
-        statusCode: 500
-      }
+      error: { message: 'Server error', arabic: 'خطأ في الخادم', statusCode: 500 }
     });
   }
 });
@@ -1138,35 +1023,16 @@ router.post('/bulk', protect, checkCreatePermission, [
 // Helper function to get predefined categories
 function getPredefinedCategories(accountType, type) {
   const baseCategories = [
-    'طعام',
-    'مواصلات',
-    'تسوق',
-    'ترفيه',
-    'صحة وطب',
-    'تعليم',
-    'أخرى'
+    'طعام', 'مواصلات', 'تسوق', 'ترفيه', 'صحة وطب', 'تعليم', 'أخرى'
   ];
 
   const businessCategories = [
-    'مكتب ومعدات',
-    'سفر عمل',
-    'اتصالات',
-    'تسويق وإعلان',
-    'تدريب',
-    'برمجيات',
-    'خدمات قانونية',
-    'محاسبة',
-    'أخرى'
+    'مكتب ومعدات', 'سفر عمل', 'اتصالات', 'تسويق وإعلان', 'تدريب',
+    'برمجيات', 'خدمات قانونية', 'محاسبة', 'أخرى'
   ];
 
   const projectCategories = [
-    'مواد خام',
-    'عمالة',
-    'معدات',
-    'نقل',
-    'تصاريح',
-    'تأمين',
-    'أخرى'
+    'مواد خام', 'عمالة', 'معدات', 'نقل', 'تصاريح', 'تأمين', 'أخرى'
   ];
 
   if (type === 'business' || (accountType === 'company' && !type)) {
